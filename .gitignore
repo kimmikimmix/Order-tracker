@@ -1,0 +1,17 @@
+# Local data — never commit customer orders or documents
+data/
+demo-data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS cruft
+.DS_Store
+Thumbs.db

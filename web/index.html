@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order Tracker</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%230a0a0b'/><text y='24' x='5' font-size='22' fill='%23ffa028' font-family='monospace'>O</text></svg>">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand">ORDER<span>TRACKER</span></div>
+
+  <div class="cmdwrap">
+    <span class="cmdslash">/</span>
+    <input id="cmd" type="text" autocomplete="off" spellcheck="false"
+           placeholder="search orders, customers, PO numbers, and inside documents…">
+    <kbd class="cmdhint">/</kbd>
+  </div>
+
+  <div class="topstats" id="topstats"></div>
+  <div class="clock" id="clock"></div>
+</header>
+
+<nav id="nav">
+  <button data-view="dash"      class="active"><b>1</b> DASH</button>
+  <button data-view="blotter"><b>2</b> BLOTTER</button>
+  <button data-view="companies"><b>3</b> CUSTOMERS</button>
+  <button data-view="docs"><b>4</b> DOCS</button>
+  <button data-view="import"><b>5</b> IMPORT</button>
+  <div class="navspacer"></div>
+  <button id="btn-new" class="accent"><b>N</b> NEW ORDER</button>
+  <a id="btn-export" href="/api/export/orders.csv" class="navlink">EXPORT CSV</a>
+</nav>
+
+<main id="main">
+  <section id="view-dash"      class="view"></section>
+  <section id="view-blotter"   class="view hidden"></section>
+  <section id="view-companies" class="view hidden"></section>
+  <section id="view-docs"      class="view hidden"></section>
+  <section id="view-import"    class="view hidden"></section>
+  <section id="view-search"    class="view hidden"></section>
+</main>
+
+<aside id="detail" class="hidden"></aside>
+<div id="modal" class="hidden"></div>
+<div id="toast"></div>
+<div id="dropveil" class="hidden"><div>drop files to file them against an order</div></div>
+
+<footer id="statusbar">
+  <span id="statusmsg">ready</span>
+  <span class="spacer"></span>
+  <span class="keys">
+    <kbd>/</kbd> search <kbd>1-5</kbd> views <kbd>j</kbd>/<kbd>k</kbd> move
+    <kbd>enter</kbd> open <kbd>esc</kbd> close <kbd>n</kbd> new
+  </span>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>
