@@ -38,8 +38,8 @@ async function renderSetup() {
   const st = data.status;
   const box = (id, value, attrs = '') =>
     `<input id="set-${id}" value="${esc(value ?? '')}" ${attrs}>`;
-  const numbox = (id, value) =>
-    `<input id="set-${id}" type="number" step="any" value="${value ?? ''}">`;
+  const numbox = (id, value, attrs = 'step="any"') =>
+    `<input id="set-${id}" type="number" ${attrs} value="${value ?? ''}">`;
   const area = (id, value, rows = 6) =>
     `<textarea id="set-${id}" rows="${rows}" spellcheck="false">${esc(value)}</textarea>`;
 
@@ -172,6 +172,40 @@ async function renderSetup() {
             <input type="checkbox" id="set-welcome_show"
               ${data.welcome.show ? 'checked' : ''}> SHOW IT AT STARTUP</label>
           <div></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 class="sect">Email intake</h2>
+        <div class="formgrid">
+          <div class="lbl">YOUR OWN ADDRESSES
+            <i class="fhint">one per line; a bare domain works too</i></div>
+          <div class="wide">${area('my_addresses', lines(p.my_addresses), 3)}</div>
+          <div class="lbl">FILE IT WITHOUT ASKING
+            <i class="fhint">how sure the match must be, 0 to 1</i></div>
+          <div>${numbox('auto_file_confidence', p.auto_file_confidence,
+                        'step="0.05" min="0" max="1"')}</div>
+        </div>
+        <div class="note">Mail from one of your own addresses is marked as
+          going out rather than coming in. Lower the confidence to have more
+          filed for you; raise it to check more by hand. A mail whose PO or
+          order number is in the subject line scores 0.95.</div>
+      </section>
+
+      <section class="card">
+        <h2 class="sect">Disputes and defects</h2>
+        <div class="listcols">
+          <div><div class="lbl">KINDS OF CASE</div>
+            ${area('case_kinds', lines(p.case_kinds), 7)}</div>
+          <div><div class="lbl">CASE STATUSES</div>
+            ${area('case_statuses', lines(p.case_statuses), 7)}</div>
+          <div><div class="lbl">SEVERITIES</div>
+            ${area('case_severities', lines(p.case_severities), 4)}
+            <div class="lbl" style="margin-top:8px">ANSWER DUE
+              <i class="fhint">days</i></div>
+            ${numbox('case_due_days', p.case_due_days)}</div>
+          <div><div class="lbl">KINDS OF LOG ENTRY</div>
+            ${area('case_entry_kinds', lines(p.case_entry_kinds), 8)}</div>
         </div>
       </section>
 
@@ -352,6 +386,13 @@ async function saveSetup() {
     ccl_materials: fromLines(value('ccl_materials')),
     product_types: fromLines(value('product_types')),
     ipc_classes: fromLines(value('ipc_classes')),
+    my_addresses: fromLines(value('my_addresses')),
+    auto_file_confidence: number('auto_file_confidence'),
+    case_kinds: fromLines(value('case_kinds')),
+    case_statuses: fromLines(value('case_statuses')),
+    case_severities: fromLines(value('case_severities')),
+    case_entry_kinds: fromLines(value('case_entry_kinds')),
+    case_due_days: number('case_due_days'),
     welcome: { name: value('welcome_name'), show: $('#set-welcome_show').checked },
   };
   try {

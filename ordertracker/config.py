@@ -93,3 +93,41 @@ DOC_KINDS = {
     "SPEC": ("spec", "drawing", "datasheet", "bom"),
     "EMAIL": (".eml", ".msg"),
 }
+
+
+# --- Scratch space ---------------------------------------------------------
+
+def use_own_temp(folder=None):
+    """Keep temporary files inside the workspace, and tidy old ones away.
+
+    Reading a PDF out of an email, or writing the little script that makes
+    the desktop icon, goes through a temporary file first. On a work
+    computer where only approved programs may write to the system disk that
+    fails, so the scratch folder is put beside the data instead — somewhere
+    we already know can be written to, because the orders are kept there.
+
+    Returns the folder in use, or None when it could not be made, in which
+    case the system temporary folder is left alone.
+    """
+    import tempfile
+    import time
+
+    scratch = Path(folder) if folder else DATA_DIR / ".scratch"
+    try:
+        scratch.mkdir(parents=True, exist_ok=True)
+        probe = scratch / ".probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError:
+        return None
+
+    day_ago = time.time() - 86400
+    for leftover in scratch.iterdir():
+        try:
+            if leftover.is_file() and leftover.stat().st_mtime < day_ago:
+                leftover.unlink()
+        except OSError:
+            pass
+
+    tempfile.tempdir = str(scratch)
+    return scratch

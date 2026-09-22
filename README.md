@@ -50,6 +50,26 @@ indexed, so searching `Meridian Freight` finds the packing list that mentions
 the carrier, not just files named after it. A file that names an order number
 is filed against that order automatically.
 
+**Reads your email without being connected to it.** Save a message out of
+Outlook — drag it into a folder, or File → Save As — and drop it on the
+INBOX page. The sender, the subject, the date and the body are read on this
+machine; the mail is summarised in two or three sentences taken from what it
+actually says; it is sorted into DEFECT, DELIVERY, PURCHASE ORDER, QUOTE,
+PAYMENT or SPEC; and it is filed against the order whose PO or order number
+it mentions, or against the customer it came from. Attachments are stored as
+documents of their own, so the PO inside the mail ends up on the order too.
+Anything it is not sure about waits in the tray with the reasons for its
+guess written next to it. Nothing is sent anywhere, and `.msg` works without
+Outlook installed.
+
+**Keeps the whole story of a dispute.** When a lot comes back faulty, open a
+case against the order: what is wrong, how many pieces, how much is claimed,
+who is handling it, and when an answer is due. Then log every call, mail,
+meeting and decision as it happens, each with its date, and give the ones
+that need chasing a follow-up date. The dashboard counts what is outstanding
+and what is late, and one click prints the case — position and full log — on
+white paper for the meeting.
+
 **Imports the exports you already have.** Point it at a `.csv` or `.xlsx` from
 your ERP or order portal. Columns are matched up for you — `Sales Order #`,
 `Customer PO`, `Requested Delivery` and friends are all recognised — and you
@@ -66,7 +86,7 @@ drive, a network share — and it copies the order book there every time it
 starts, keeping the last several copies. The status bar always shows when your
 work was last saved and last backed up.
 
-**Keyboard-first.** `/` to search, `1`–`6` for views, `j`/`k` to move down the
+**Keyboard-first.** `/` to search, `1`–`8` for views, `j`/`k` to move down the
 blotter, `enter` to open, `n` for a new order, `esc` to close.
 
 ## The build specification and cost sheet
@@ -106,6 +126,89 @@ reprices an old quote behind your back.
 
 **PRINT SHEET** opens a clean page on white paper — the specification, the
 costing and the documents on file — ready for `Ctrl+P` or saving as a PDF.
+
+## The inbox: filing email without a mail server
+
+This machine cannot reach your mailbox, and the app never tries. You bring
+the mail to it:
+
+1. In Outlook, drag the message into a folder on your drive, or File → Save
+   As → Outlook Message Format. Several at once is fine.
+2. Drop them on the INBOX page, or on the MAIL tab of an order to file them
+   there directly.
+
+`.eml` and `.msg` are both read, and `.msg` needs nothing installed — the
+reader for Outlook's compound-file format is part of the app.
+
+For each mail it works out three things, in this order:
+
+**Who sent it.** From the internet headers where they are kept, otherwise
+from Outlook's own properties, preferring the real SMTP address over the
+internal directory name.
+
+**What it says.** The reply history and the signature are cut away first —
+summarising a reply otherwise gives you last week's news. What is left is
+scored sentence by sentence: words that repeat are taken to be the subject
+matter, sentences carrying most of them win, and a sentence with a quantity,
+a date or a question in it counts for more. Two or three sentences come back,
+in the order they were written. **Every word of the summary is a word from
+the mail** — it is an extract, not a rewrite, so it cannot invent a promise
+nobody made. It runs in a blink and works in English and Korean.
+
+**Where it belongs.** In order of how much they are worth trusting:
+
+| Signal | How sure |
+| --- | --- |
+| a PO, order or quote number you hold, in the subject line | 0.95 |
+| the same, in the body | 0.85 |
+| a sender you have filed to this customer before | 0.90 |
+| the contact address on the customer record | 0.90 |
+| the mail domain, when only one customer uses it | 0.75 |
+| the customer's name written in the mail | 0.70 |
+| the customer's only open order — offered, never assumed | 0.60 |
+
+At 0.8 and above it files itself; below that it waits in the tray. Naming two
+orders at once always waits, however well the sender is known. Every reason
+is kept and shown next to the mail, and correcting one teaches the next: file
+a stranger's mail against a customer once and the next mail from that address
+goes there by itself.
+
+Attachments worth keeping are stored as documents against the same order —
+the PO inside the mail, not just the mail. Signature logos and certificates
+are left out. The mail itself is stored too, so it stays searchable and can
+be opened again exactly as it arrived.
+
+Set your own addresses under SETUP → EMAIL INTAKE and mail you sent is marked
+as going out rather than coming in. The confidence needed to file without
+asking is set there too.
+
+## Disputes, defects and what you did about them
+
+A dispute is won on the record, not on the argument. Open a case against the
+order (CASES → OPEN A CASE, or the CASES tab on any order) and it holds two
+things:
+
+**The position.** What is wrong, the kind (defect, shortage, delay, wrong
+spec, damage, price), severity, how many pieces are affected, the lot, the
+value claimed in won, who is handling it, when an answer is due, and — as
+they become known — the root cause and the resolution.
+
+**The log.** Every call, mail, meeting, visit, note, action and decision, each
+with its own date and the person on the other end. Entries are added, never
+overwritten. Anything that needs chasing gets a follow-up date, and those
+appear on the CASES page and on the dashboard, with the late ones in red,
+until they are ticked off.
+
+An email in the tray can be logged straight into a case, or can open a new
+one with its subject and summary already filled in.
+
+`PRINT REPORT` puts the whole thing — position, what is wrong, root cause,
+resolution and the full log with every detail — on white paper. That is the
+document you take into the meeting or attach to the credit note.
+
+Case references count up within the year: `C-2026-001`. Closing an order
+takes its cases with it; a closed case stops appearing in what is
+outstanding, while a resolved one keeps its actions until they are done.
 
 ## Putting customers on the map
 
@@ -375,6 +478,44 @@ A folder left behind by an earlier attempt can also carry permissions that
 deny writes; the check says whether the folder was already there, and
 deleting it is then the whole fix.
 
+### If your work computer only lets approved programs write files
+
+Some managed machines allow `git` to fill a folder and then refuse
+`python.exe` a single file in the same folder. The check above names it when
+it can. There is nothing to fix in the app: put the whole thing on a drive
+you own — a personal network drive is fine for this — and run it from there.
+
+```
+cd /d C:\Users\<you>\Order-tracker
+py move_to.py "G:\your folder\Order Tracker" --no-git
+```
+
+That copies the app, marks the copy portable and leaves it keeping
+everything in its own folder: the database, the documents, the settings file
+and its own scratch folder for temporary work. After that, nothing is written
+to the system disk at all.
+
+Run it from the copy:
+
+```
+cd /d G:\your folder\Order Tracker
+py run.py
+```
+
+If the usual settings folder is closed to Python, `settings.json` is written
+beside `run.py` instead and read back from there — you lose nothing. If the
+system temporary folder is closed too, the scratch work that reading a PDF
+out of an email needs happens in `data/.scratch` next to your orders.
+`py doctor.py` lists every place the app writes and says which of them this
+machine allows.
+
+Two things to know when the drive is a network share: keep one machine in it
+at a time (the app leaves a note in the folder and says so if another machine
+has it open), and set a backup folder under SETUP so there is a second copy
+somewhere. `git clone` and `git pull` cannot be relied on over a share, which
+is why the copy above leaves the git history behind; to update later, pull on
+the machine's own disk and run `move_to.py` again.
+
 **On Windows** use `py run.py`. If Python isn't installed, get it from
 python.org and tick "Add Python to PATH" during setup.
 
@@ -388,8 +529,9 @@ Wherever you pointed `setup.py`, in one folder:
 ```
 <your folder>/
   data/
-    orders.db        all orders, customers, history and extracted text
+    orders.db        all orders, customers, email, cases and extracted text
     documents/       the original files, exactly as you dropped them in
+    .scratch/        temporary working files, cleared as it goes
   demo-data/         the sample order book, kept well away from the real one
 ```
 
@@ -409,6 +551,9 @@ recording your chosen folder and welcome name:
 | macOS | `~/Library/Application Support/OrderTracker/settings.json` |
 | Linux | `~/.config/order-tracker/settings.json` |
 | **Portable** | `settings.json` beside `run.py`, so nothing is left behind |
+
+If the machine refuses Python that folder, the file is written beside
+`run.py` instead and read back from there.
 
 Data folders are excluded from git, so customer information is never
 committed.
@@ -496,15 +641,24 @@ Worth knowing before you rely on it:
 - **The map is a backdrop, not an atlas.** The coastlines are drawn by hand and
   deliberately rough. Customer pins are plotted from real coordinates, so they
   land in the right place regardless.
-- **It doesn't talk to your ERP.** Data arrives by import, by drag-and-drop, or
-  by typing. A live connection would be the next thing to build.
+- **It doesn't talk to your ERP, or to your mailbox.** Data arrives by import,
+  by drag-and-drop, or by typing. Email is read from messages you save out and
+  drop in; there is no connection to a mail server, by design — on a locked
+  machine there could not be one, and nothing here leaves the computer.
+- **The mail summary is an extract, not a rewrite.** It picks the sentences
+  that carry the most of what the mail keeps saying. On a mail with no prose
+  in it — a bare "see attached" — there is nothing to pick, and it says so.
+  It cannot read a scanned letter, for the same reason as above.
+- **Matching an email to an order is a guess, and says so.** It files what it
+  is sure of and shows its reasons; the rest waits for you. It has no idea
+  what your customers call things until you tell it once.
 - **Legacy `.doc` and `.xls`** (the old binary formats) can't be read for text.
   Save as `.docx` / `.xlsx` if you need their contents searchable.
 
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 186 tests, no dependencies
+python3 -m unittest discover tests     # 229 tests, no dependencies
 ```
 
 The pieces:
@@ -517,6 +671,9 @@ uninstall.py                find every piece of it and remove them
 doctor.py                   startup check when something will not run
 ordertracker/
   config.py                 pipeline, thresholds, paths — edit this first
+  mail.py                   read a saved email, summarise it, file it
+  outlook.py                Outlook .msg reader, written from the format up
+  cases.py                  disputes and defects, and the log of each one
   settings.py               remembered storage folder and welcome name
   shortcut.py               desktop shortcut for Windows, macOS and Linux
   prefs.py                  the settings page's values, stored with the data
@@ -541,6 +698,8 @@ web/                        the single-page front end (no build step)
   map.js                    the map, the day/night line, sun and moon
   spec.js                   the specification form and the cost sheet
   setup.js                  the settings page
+  inbox.js                  the email tray
+  cases.js                  disputes and their logs
 assets/                     app icon (regenerate with tools/make_icon.py)
 tests/                      the test suite
 ```

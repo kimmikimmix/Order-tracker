@@ -15,8 +15,8 @@ import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import (backup, config, db, documents, geo, importer, multipart,
-               orders, pcb, prefs, printsheet, relocate, settings)
+from . import (backup, cases, config, db, documents, geo, importer, mail,
+               multipart, orders, pcb, prefs, printsheet, relocate, settings)
 
 MAX_BODY_BYTES = config.MAX_UPLOAD_BYTES + (8 * 1024 * 1024)
 
@@ -53,12 +53,17 @@ def api_bootstrap(handler, match):
         "doc_kinds": sorted(config.DOC_KINDS) + ["OTHER"],
         "import_fields": list(importer.FIELDS),
         "companies": orders.list_companies(),
-        "dashboard": orders.dashboard(),
+        "dashboard": _dashboard(),
         "thresholds": {
             "due_soon_days": int(prefs.get("due_soon_days")),
             "stalled_days": int(prefs.get("stalled_days")),
         },
         "prefs": prefs.load(),
+        "mail_categories": [name for name, _ in mail.CATEGORIES] + ["GENERAL"],
+        "case_kinds": prefs.get("case_kinds"),
+        "case_severities": prefs.get("case_severities"),
+        "case_statuses": prefs.get("case_statuses"),
+        "case_entry_kinds": prefs.get("case_entry_kinds"),
         "countries": geo.country_list(),
         "cities": geo.city_list(),
         "spec_fields": [{"name": n, "kind": k, "label": pcb.LABELS.get(n, n)}
@@ -74,9 +79,17 @@ def api_ping(handler, match):
     return {"app": "order-tracker", "data": str(config.DATA_DIR)}
 
 
+def _dashboard() -> dict:
+    """The blotter's own figures, plus the trays that need attention."""
+    board = orders.dashboard()
+    board["mail"] = mail.tray()
+    board["cases"] = cases.summary()
+    return board
+
+
 @route("GET", r"/api/dashboard")
 def api_dashboard(handler, match):
-    return orders.dashboard()
+    return _dashboard()
 
 
 @route("GET", r"/api/orders")
@@ -98,9 +111,15 @@ def api_orders(handler, match):
 
 @route("GET", r"/api/orders/(\d+)")
 def api_order_detail(handler, match):
-    order = orders.get_order(int(match.group(1)))
+    order_id = int(match.group(1))
+    order = orders.get_order(order_id)
     if order is None:
         raise ApiError("No such order.", HTTPStatus.NOT_FOUND)
+    # Joined here rather than in orders.py: cases already read orders, and
+    # a module that imports the module importing it is a cycle waiting to
+    # happen.
+    order["cases"] = cases.list_cases(order_id=order_id)
+    order["emails"] = mail.list_mail(order_id=order_id)
     return order
 
 
@@ -182,6 +201,21 @@ def api_document_upload(handler, match):
         if not part.filename:
             continue
         try:
+            # A saved email is worth more than a stored file: read it, so
+            # its sender, its summary and its attachments come with it.
+            if kind in (None, "", "EMAIL") and mail.looks_like_mail(
+                    part.filename, part.data):
+                item = mail.intake(part.filename, part.data, order_id=order_id)
+                saved.append({
+                    "id": item.get("doc_id"), "filename": part.filename,
+                    "kind": "EMAIL", "order_id": item.get("order_id"),
+                    "autofiled_to": item.get("order_id"),
+                    "duplicate": item.get("duplicate", False),
+                    "mail_id": item.get("id"),
+                    "subject": item.get("subject"),
+                    "text_len": len(item.get("summary") or ""),
+                })
+                continue
             doc = documents.store(part.filename, part.data,
                                   order_id=order_id, kind=kind)
             if not order_id:
@@ -268,6 +302,159 @@ def api_document_update(handler, match):
 def api_document_delete(handler, match):
     documents.delete(int(match.group(1)))
     return {"ok": True}
+
+
+# --- API: email intake -----------------------------------------------------
+
+@route("GET", r"/api/mail")
+def api_mail_list(handler, match):
+    q = handler.query
+    review = q.get("review")
+    return {
+        "mail": mail.list_mail(
+            needs_review=None if review in (None, "", "all") else review == "1",
+            order_id=_int_or_none(q.get("order_id")),
+            company_id=_int_or_none(q.get("company_id")),
+            category=q.get("category") or None,
+            query=q.get("q") or None),
+        "tray": mail.tray(),
+    }
+
+
+@route("POST", r"/api/mail/upload")
+def api_mail_upload(handler, match):
+    """Take saved emails, read them, and file what can be filed."""
+    fields = handler.multipart_body()
+    order_id = _int_or_none(multipart.value(fields, "order_id"))
+    files = fields.get("files") or fields.get("file") or []
+    if not files:
+        raise ApiError("No email was included in the upload.")
+
+    read, failed = [], []
+    for part in files:
+        if not part.filename:
+            continue
+        try:
+            read.append(mail.intake(part.filename, part.data, order_id=order_id))
+        except Exception as exc:
+            failed.append({"filename": part.filename, "error": str(exc)})
+    return {"ok": True, "mail": read, "failed": failed, "tray": mail.tray()}
+
+
+@route("GET", r"/api/mail/(\d+)")
+def api_mail_detail(handler, match):
+    item = mail.get(int(match.group(1)))
+    if item is None:
+        raise ApiError("No such email.", HTTPStatus.NOT_FOUND)
+    if item.get("doc_id"):
+        document = documents.get(item["doc_id"])
+        item["body"] = (document or {}).get("content_text") or ""
+    return item
+
+
+@route("POST", r"/api/mail/(\d+)")
+def api_mail_assign(handler, match):
+    data = handler.json_body()
+    try:
+        return {"ok": True, "mail": mail.assign(
+            int(match.group(1)),
+            order_id=_int_or_none(data.get("order_id")),
+            company_id=_int_or_none(data.get("company_id")),
+            confirmed=bool(data.get("confirmed", True)))}
+    except ValueError as exc:
+        raise ApiError(str(exc)) from exc
+
+
+@route("DELETE", r"/api/mail/(\d+)")
+def api_mail_delete(handler, match):
+    keep = handler.query.get("keep_document") == "1"
+    mail.delete(int(match.group(1)), with_document=not keep)
+    return {"ok": True}
+
+
+# --- API: disputes and defects ---------------------------------------------
+
+@route("GET", r"/api/cases")
+def api_cases(handler, match):
+    q = handler.query
+    return {
+        "cases": cases.list_cases(
+            status=q.get("status") or None,
+            order_id=_int_or_none(q.get("order_id")),
+            company_id=_int_or_none(q.get("company_id")),
+            open_only=q.get("open") == "1",
+            query=q.get("q") or None),
+        "follow_ups": cases.follow_ups(
+            int(q.get("days") or prefs.get("due_soon_days") or 7)),
+        "summary": cases.summary(),
+    }
+
+
+@route("POST", r"/api/cases")
+def api_case_open(handler, match):
+    data = handler.json_body()
+    try:
+        case_id = cases.open_case(data, actor=str(data.get("actor") or ""))
+    except cases.CaseError as exc:
+        raise ApiError(str(exc)) from exc
+    return {"ok": True, "id": case_id, "case": cases.get_case(case_id)}
+
+
+@route("GET", r"/api/cases/(\d+)")
+def api_case_detail(handler, match):
+    case = cases.get_case(int(match.group(1)))
+    if case is None:
+        raise ApiError("No such case.", HTTPStatus.NOT_FOUND)
+    return case
+
+
+@route("POST", r"/api/cases/(\d+)")
+def api_case_update(handler, match):
+    data = handler.json_body()
+    try:
+        return {"ok": True, "case": cases.update_case(
+            int(match.group(1)), data, actor=str(data.get("actor") or ""))}
+    except cases.CaseError as exc:
+        raise ApiError(str(exc)) from exc
+
+
+@route("DELETE", r"/api/cases/(\d+)")
+def api_case_delete(handler, match):
+    cases.delete_case(int(match.group(1)))
+    return {"ok": True}
+
+
+@route("POST", r"/api/cases/(\d+)/entries")
+def api_case_entry_add(handler, match):
+    case_id = int(match.group(1))
+    try:
+        entry_id = cases.add_entry(case_id, handler.json_body())
+    except cases.CaseError as exc:
+        raise ApiError(str(exc)) from exc
+    return {"ok": True, "id": entry_id, "case": cases.get_case(case_id)}
+
+
+@route("POST", r"/api/case-entries/(\d+)")
+def api_case_entry_update(handler, match):
+    data = handler.json_body()
+    entry_id = int(match.group(1))
+    if "done" in data:
+        cases.complete_follow_up(entry_id, bool(data["done"]))
+    else:
+        cases.update_entry(entry_id, data)
+    return {"ok": True}
+
+
+@route("DELETE", r"/api/case-entries/(\d+)")
+def api_case_entry_delete(handler, match):
+    cases.delete_entry(int(match.group(1)))
+    return {"ok": True}
+
+
+@route("GET", r"/api/follow-ups")
+def api_follow_ups(handler, match):
+    days = int(handler.query.get("days") or 7)
+    return {"follow_ups": cases.follow_ups(days)}
 
 
 # --- API: import / export --------------------------------------------------
@@ -473,6 +660,15 @@ def print_order(handler, match):
     page = printsheet.render(int(match.group(1)))
     if page is None:
         raise ApiError("No such order.", HTTPStatus.NOT_FOUND)
+    handler.send_bytes(page.encode("utf-8"), "text/html; charset=utf-8")
+    return None
+
+
+@route("GET", r"/print/case/(\d+)")
+def print_case(handler, match):
+    page = printsheet.case_sheet(int(match.group(1)))
+    if not page:
+        raise ApiError("No such case.", HTTPStatus.NOT_FOUND)
     handler.send_bytes(page.encode("utf-8"), "text/html; charset=utf-8")
     return None
 

@@ -185,13 +185,31 @@ function renderTopStats() {
     <div class="st"><i>LATE</i><b style="color:var(--red)">${a['OVERDUE'] || 0}</b></div>
     <div class="st"><i>DUE</i><b style="color:var(--amber)">${a['DUE SOON'] || 0}</b></div>
     <div class="st"><i>DOCS</i><b>${d.document_count}</b></div>`;
+  renderNavCounts();
+}
+
+/* A count on the nav button itself, so an unread tray or a late follow-up
+   is visible from every page rather than only from the dashboard. */
+function renderNavCounts() {
+  const d = S.boot.dashboard;
+  const mail = d.mail || {};
+  const cases = d.cases || {};
+  const badge = (node, count, colour) => {
+    if (!node) return;
+    node.textContent = count ? String(count) : '';
+    node.style.background = count ? colour : 'transparent';
+  };
+  badge($('#navmail'), mail.needs_review, 'var(--amber)');
+  badge($('#navcases'), (cases.overdue || 0) + (cases.late_actions || 0),
+        'var(--red)');
 }
 
 /* ----------------------------------------------------------------- routes */
 /* The address bar mirrors where you are, so a view, a filter or a single
    order can be bookmarked or pasted to a colleague on the same machine. */
 
-const NAV_VIEWS = ['dash', 'blotter', 'companies', 'docs', 'import', 'setup'];
+const NAV_VIEWS = ['dash', 'blotter', 'companies', 'inbox', 'cases',
+                   'docs', 'import', 'setup'];
 
 function setHash(fragment) {
   const next = '#' + fragment;
@@ -206,8 +224,19 @@ function applyHash() {
   const rest = raw.split('/').slice(1).join('/');
 
   if (head === 'order' && rest) {
+    const [orderId, tab] = rest.split('/');
     show('blotter');
-    openOrder(Number(rest));
+    openOrder(Number(orderId), tab);
+    return;
+  }
+  if (head === 'case' && rest) {
+    show('cases');
+    openCase(Number(rest));
+    return;
+  }
+  if (head === 'mail' && rest) {
+    show('inbox');
+    openMail(Number(rest));
     return;
   }
   if (head === 'search' && rest) {
@@ -233,6 +262,8 @@ function show(view) {
   if (view === 'dash') renderDash();
   if (view === 'blotter') loadBlotter();
   if (view === 'companies') renderCompanies();
+  if (view === 'inbox') renderInbox();
+  if (view === 'cases') renderCases();
   if (view === 'docs') renderDocs();
   if (view === 'import') renderImport();
   if (view === 'setup') renderSetup();
@@ -244,6 +275,8 @@ function show(view) {
 function renderDash() {
   const d = S.boot.dashboard;
   const a = d.alerts;
+  const mail = d.mail || {};
+  const disputes = d.cases || {};
   const el = $('#view-dash');
 
   const tile = (label, value, sub, kind, onclick) => `
@@ -270,6 +303,14 @@ function renderDash() {
       ${tile('MISSING PO', a['NO PO'] || 0, 'no PO on file', 'red', 'alert:NO PO')}
       ${tile('CUSTOMERS', d.company_count, 'with orders', '', 'companies')}
       ${tile('DOCUMENTS', d.document_count, 'indexed and searchable', '', 'docs')}
+      ${tile('MAIL TO CHECK', mail.needs_review || 0,
+             `${mail.total || 0} email(s) read`,
+             mail.needs_review ? 'amber' : '', 'inbox')}
+      ${tile('OPEN CASES', disputes.open || 0,
+             disputes.late_actions
+               ? `${disputes.late_actions} action(s) late`
+               : `${disputes.open_actions || 0} action(s) outstanding`,
+             (disputes.overdue || disputes.late_actions) ? 'red' : '', 'cases')}
     </div>
 
     <h2 class="sect">Needs attention</h2>
@@ -346,6 +387,8 @@ function renderDash() {
         show('blotter');
       } else if (act === 'companies') show('companies');
       else if (act === 'docs') show('docs');
+      else if (act === 'inbox') show('inbox');
+      else if (act === 'cases') show('cases');
       return;
     }
     const row = event.target.closest('[data-open]');
@@ -898,11 +941,13 @@ async function runSearch(text) {
 
 /* --------------------------------------------------------- detail panel */
 
-async function openOrder(orderId) {
+async function openOrder(orderId, tab) {
   try {
     S.openOrder = await api('/api/orders/' + orderId);
   } catch (err) { toast(err.message, 'err'); return; }
-  setHash('order/' + orderId);
+  if (tab) S.detailTab = tab;
+  setHash('order/' + orderId
+          + (S.detailTab && S.detailTab !== 'order' ? '/' + S.detailTab : ''));
   renderDetail();
 }
 
@@ -926,8 +971,12 @@ function renderDetail() {
     ['spec', 'SPEC'],
     ['cost', 'COST'],
     ['docs', `DOCS (${o.documents.length})`],
+    ['mail', `MAIL (${(o.emails || []).length})`],
+    ['cases', `CASES (${(o.cases || []).length})`],
     ['history', 'HISTORY'],
   ];
+
+  const openCases = (o.cases || []).filter(c => c.open).length;
 
   panel.innerHTML = `
     <div class="dhead">
@@ -952,7 +1001,7 @@ function renderDetail() {
           <button data-tab="${key}" class="${tab === key ? 'active' : ''}">${label}</button>`).join('')}
         <span class="spacer"></span>
         <a class="btn" href="/print/order/${o.id}" target="_blank"
-           title="A printable specification and cost sheet">PRINT SHEET</a>
+           title="A printable specification and cost sheet">PRINT</a>
       </div>
 
       <div class="dpane ${tab === 'order' ? '' : 'hidden'}" id="pane-order">
@@ -1043,6 +1092,50 @@ function renderDetail() {
         </div>
       </div>
 
+      <div class="dpane ${tab === 'mail' ? '' : 'hidden'}" id="pane-mail">
+        <div class="dropzone" id="o-maildrop" style="margin-bottom:8px">
+          Drop saved emails here to file them against ${esc(o.order_no)}
+          <input type="file" id="o-mailfile" multiple class="hidden"
+                 accept=".msg,.eml,.mht,.mhtml,.txt">
+        </div>
+        <div class="doclist">
+          ${(o.emails || []).length ? (o.emails || []).map(m => `
+            <div class="docrow mailrow" data-mail="${m.id}">
+              <span class="chip k-${esc(m.category || 'GENERAL')}">${esc(m.category || 'GENERAL')}</span>
+              <span class="dname">${esc(m.subject || '(no subject)')}
+                <span class="subtle">${esc(m.from_name || m.from_email || '')}
+                  · ${esc(String(m.sent_at || m.filed_at || '').slice(0, 10))}</span>
+                <div class="subtle">${esc(m.summary || '')}</div></span>
+              ${m.attachments ? `<span class="dmeta">${m.attachments} file(s)</span>` : ''}
+              ${m.needs_review ? '<span class="chip a-DUESOON">CHECK</span>' : ''}
+            </div>`).join('')
+          : '<div class="note">No email filed against this order yet.</div>'}
+        </div>
+      </div>
+
+      <div class="dpane ${tab === 'cases' ? '' : 'hidden'}" id="pane-cases">
+        <div class="filterbar" style="padding:0 0 10px">
+          <button class="btn accent" id="d-newcase">OPEN A CASE ON THIS ORDER</button>
+          <span class="spacer"></span>
+          <span class="note">${openCases
+            ? openCases + ' still open' : 'nothing outstanding'}</span>
+        </div>
+        <div class="doclist">
+          ${(o.cases || []).length ? (o.cases || []).map(c => `
+            <div class="docrow caserow" data-case="${c.id}">
+              <span class="chip ${c.open ? 'a-DUESOON' : 'ok'}">${esc(c.status)}</span>
+              <span class="dname">${esc(c.ref)} — ${esc(c.title)}
+                <div class="subtle">${esc(c.kind)} · ${esc(c.severity)}
+                  · opened ${esc(c.opened_at || '')}
+                  ${c.qty_affected ? '· ' + c.qty_affected + ' pcs' : ''}
+                  ${c.claim_krw ? '· ' + Number(c.claim_krw).toLocaleString() + ' KRW' : ''}</div></span>
+              ${c.open_actions ? `<span class="chip a-OVERDUE">${c.open_actions} ACTION(S)</span>` : ''}
+              ${c.overdue ? '<span class="chip a-OVERDUE">LATE</span>' : ''}
+            </div>`).join('')
+          : '<div class="note">No disputes or defect claims on this order.</div>'}
+        </div>
+      </div>
+
       <div class="dpane ${tab === 'history' ? '' : 'hidden'}" id="pane-history">
         <div class="timeline">
           ${o.history.map(h => `
@@ -1075,6 +1168,7 @@ function renderDetail() {
   $$('#detail .dtabs button').forEach(button => {
     button.onclick = () => {
       S.detailTab = button.dataset.tab;
+      setHash('order/' + o.id + (S.detailTab === 'order' ? '' : '/' + S.detailTab));
       $$('#detail .dtabs button').forEach(b =>
         b.classList.toggle('active', b === button));
       $$('#detail .dpane').forEach(pane =>
@@ -1090,6 +1184,33 @@ function renderDetail() {
   refreshSpecCalc();
 
   wireDropzone($('#o-drop'), $('#o-file'), o.id, () => openOrder(o.id));
+
+  const mailZone = $('#o-maildrop');
+  const mailInput = $('#o-mailfile');
+  if (mailZone && mailInput) {
+    mailZone.onclick = () => mailInput.click();
+    mailInput.onchange = () => uploadMail(mailInput.files, o.id);
+    ['dragover', 'dragenter'].forEach(ev => mailZone.addEventListener(ev, e => {
+      e.preventDefault(); mailZone.classList.add('over');
+    }));
+    ['dragleave', 'drop'].forEach(ev => mailZone.addEventListener(ev, e => {
+      e.preventDefault(); mailZone.classList.remove('over');
+    }));
+    mailZone.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadMail(e.dataTransfer.files, o.id);
+    });
+    $('#pane-mail').onclick = event => {
+      const row = event.target.closest('[data-mail]');
+      if (row) openMail(Number(row.dataset.mail));
+    };
+  }
+
+  $('#d-newcase').onclick = () => newCaseModal({ orderId: o.id });
+  $('#pane-cases').onclick = event => {
+    const row = event.target.closest('[data-case]');
+    if (row) openCase(Number(row.dataset.case));
+  };
 
   $('.doclist', panel).onclick = async event => {
     const textBtn = event.target.closest('[data-text]');
@@ -1232,6 +1353,9 @@ function modal(title, bodyHTML, buttons) {
 function closeModal() {
   $('#modal').classList.add('hidden');
   $('#modal').innerHTML = '';
+  // A case or an email opened from a link put itself in the address bar;
+  // closing it puts the view back, so a refresh lands where you are.
+  if (!S.openOrder && NAV_VIEWS.includes(S.view)) setHash(S.view);
 }
 
 function newOrderModal() {
@@ -1423,8 +1547,8 @@ document.addEventListener('keydown', event => {
 
   if (event.key === '/') { event.preventDefault(); $('#cmd').focus(); return; }
 
-  const views = { '1': 'dash', '2': 'blotter', '3': 'companies', '4': 'docs',
-                  '5': 'import', '6': 'setup' };
+  const views = { '1': 'dash', '2': 'blotter', '3': 'companies', '4': 'inbox',
+                  '5': 'cases', '6': 'docs', '7': 'import', '8': 'setup' };
   if (views[event.key]) { show(views[event.key]); return; }
 
   if (event.key === 'n' || event.key === 'N') { newOrderModal(); return; }

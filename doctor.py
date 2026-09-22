@@ -87,6 +87,24 @@ def folder_works(folder: Path) -> str:
     return ""
 
 
+def can_write(folder: Path) -> str:
+    """Empty when a plain file can be written there, else why not.
+
+    Separate from folder_works, which also insists on a database. Plenty of
+    places need only to take a small file — the settings, the scratch
+    folder, the desktop icon — and a machine can allow one and refuse the
+    other.
+    """
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        probe = folder / ".write-probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return ""
+
+
 def line(label, value):
     print(f"  {label:<22} {value}")
 
@@ -198,6 +216,33 @@ def main():
             print(f"  > Add an allowed app, and pick:\n")
             print(f"      {sys.executable}")
             print("\n  Or just keep the data somewhere it does not watch, below.")
+
+    print("\nEverywhere the app writes")
+    from ordertracker import settings
+    spots = [
+        ("settings", settings.settings_dir()),
+        ("app folder", config.BASE_DIR),
+        ("scratch", config.DATA_DIR / ".scratch"),
+        ("system temp", Path(tempfile.gettempdir())),
+    ]
+    refused = {}
+    for label, folder in spots:
+        problem = can_write(folder)
+        refused[label] = problem
+        if problem:
+            print(f"  [FAIL] {label:<12} {folder}")
+            print(f"         {problem}")
+        else:
+            print(f"  [ ok ] {label:<12} {folder}")
+
+    if refused["settings"] and not refused["app folder"]:
+        print("\n  The usual settings folder is closed to Python on this")
+        print("  machine, so the app keeps settings.json beside run.py")
+        print("  instead and reads it back from there. Nothing is lost.")
+    if refused["system temp"] and not refused["scratch"]:
+        print("\n  The system temporary folder is closed to Python too. The")
+        print("  app does its temporary work in the scratch folder beside")
+        print("  your data instead, so reading email attachments still works.")
 
     print("\nSomewhere else to keep the data")
     working = []

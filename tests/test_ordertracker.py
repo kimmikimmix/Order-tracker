@@ -8,6 +8,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -25,9 +26,9 @@ config.DOCS_DIR = _TMP / "documents"
 config.DB_PATH = _TMP / "test.db"
 
 import fixtures  # noqa: E402
-from ordertracker import (backup, db, documents, geo, importer,  # noqa: E402
-                          multipart, orders, pcb, prefs, printsheet,
-                          sampledata)
+from ordertracker import (backup, cases, db, documents, geo,  # noqa: E402
+                          importer, mail, multipart, orders, outlook, pcb,
+                          prefs, printsheet, sampledata)
 from ordertracker.extract import extract_text  # noqa: E402
 
 
@@ -40,7 +41,8 @@ def fresh_db():
     db.init_db()
     conn = db.connect()
     with conn:
-        for table in ("status_history", "documents", "order_specs", "orders",
+        for table in ("status_history", "documents", "order_specs",
+                      "case_entries", "cases", "emails", "orders",
                       "companies", "orders_fts", "documents_fts"):
             conn.execute(f"DELETE FROM {table}")
         conn.execute("DELETE FROM meta WHERE key = 'prefs'")
@@ -2419,3 +2421,504 @@ class TestDoctor(unittest.TestCase):
         else:                                     # pragma: no cover
             self.assertIn(self.doctor.controlled_folder_access(),
                           ("off", "ON", "audit only", "could not be read"))
+
+
+# ------------------------------------------------------------ Outlook .msg
+
+class TestOutlookMessages(unittest.TestCase):
+    """The .msg reader, against files written by the fixture builder."""
+
+    def make(self, **kwargs):
+        path = _TMP / f"msg-{abs(hash(tuple(sorted(map(str, kwargs)))))}.msg"
+        fixtures.make_msg(path, **kwargs)
+        return outlook.read(path.read_bytes())
+
+    def test_the_headline_fields_come_back(self):
+        found = self.make(
+            subject="Defect report PO-2026-1188",
+            sender_name="Ha-eun Park", sender_email="haeun@northwind.example",
+            to="sales@ourpcb.example", body="Twelve boards have open circuits.",
+            sent=datetime.datetime(2026, 3, 14, 9, 30,
+                                   tzinfo=datetime.timezone.utc))
+        self.assertEqual(found["subject"], "Defect report PO-2026-1188")
+        self.assertEqual(found["from_name"], "Ha-eun Park")
+        self.assertEqual(found["from_email"], "haeun@northwind.example")
+        self.assertEqual(found["to"], "sales@ourpcb.example")
+        self.assertEqual(found["sent_at"], "2026-03-14 09:30:00")
+        self.assertIn("open circuits", found["body"])
+
+    def test_korean_survives_the_round_trip(self):
+        found = self.make(subject="납기 문의 - SD-77140",
+                          sender_name="김영진", body="출하 일정을 확인 부탁드립니다.")
+        self.assertEqual(found["subject"], "납기 문의 - SD-77140")
+        self.assertEqual(found["from_name"], "김영진")
+        self.assertIn("출하", found["body"])
+
+    def test_a_small_attachment_is_read_from_the_mini_stream(self):
+        """Anything under 4 KB is packed into the mini stream, not sectors."""
+        found = self.make(subject="with a note", body="see attached",
+                          attachments=[{"filename": "note.txt",
+                                        "data": b"lot 1 ships Monday"}])
+        self.assertEqual(len(found["attachments"]), 1)
+        self.assertEqual(found["attachments"][0]["filename"], "note.txt")
+        self.assertEqual(found["attachments"][0]["data"], b"lot 1 ships Monday")
+
+    def test_a_large_attachment_is_read_from_its_own_sectors(self):
+        payload = b"%PDF-1.4 " + b"x" * 20_000
+        found = self.make(subject="with a drawing", body="see attached",
+                          attachments=[{"filename": "drawing.pdf",
+                                        "data": payload}])
+        self.assertEqual(found["attachments"][0]["data"], payload)
+
+    def test_something_that_is_not_a_msg_is_refused_clearly(self):
+        with self.assertRaises(outlook.NotAnOutlookFile):
+            outlook.read(b"From: someone\r\nSubject: this is an eml\r\n\r\nhi")
+
+
+# ------------------------------------------------------------- email intake
+
+class TestReadingMail(unittest.TestCase):
+    """Parsing, summarising and sorting, with nothing to connect to."""
+
+    REPLY = (
+        "From: Ha-eun Park <haeun@northwind.example>\r\n"
+        "To: sales@ourpcb.example\r\n"
+        "Subject: Defect report - PO-2026-1188 - 12 boards with open circuits\r\n"
+        "Date: Mon, 21 Sep 2026 09:30:00 +0200\r\n"
+        "Content-Type: text/plain; charset=\"utf-8\"\r\n\r\n"
+        "Dear Young-jin,\r\n\r\n"
+        "We received lot 3 of PO-2026-1188 and our AOI found 12 boards with "
+        "open circuits on layer 4.\r\n"
+        "Could you confirm by Friday whether you will rework them or issue a "
+        "credit note?\r\n\r\n"
+        "Best regards,\r\nHa-eun\r\n"
+        "--\r\nHa-eun Park | Quality | Northwind\r\n\r\n"
+        "> On 10 March, you wrote:\r\n"
+        "> The shipment left on Monday and arrives Thursday.\r\n"
+    ).encode()
+
+    def test_the_headers_are_read(self):
+        found = mail.parse("reply.eml", self.REPLY)
+        self.assertEqual(found["from_email"], "haeun@northwind.example")
+        self.assertEqual(found["from_name"], "Ha-eun Park")
+        self.assertEqual(found["from_domain"], "northwind.example")
+        self.assertEqual(found["sent_at"], "2026-09-21 07:30:00")  # in UTC
+
+    def test_the_conversation_underneath_is_left_out(self):
+        body = mail.clean_body(mail.parse("reply.eml", self.REPLY)["body"])
+        self.assertIn("open circuits", body)
+        self.assertNotIn("arrives Thursday", body)
+        self.assertNotIn("Quality | Northwind", body)
+
+    def test_the_summary_keeps_to_what_the_mail_says(self):
+        found = mail.parse("reply.eml", self.REPLY)
+        summary, keywords = mail.summarise(found["subject"], found["body"])
+        self.assertIn("12 boards", summary)
+        self.assertLessEqual(len(summary), mail.MAX_SUMMARY_CHARS)
+        # Every word of the summary has to have been in the mail: this is an
+        # extract, and it must never invent anything.
+        haystack = (found["subject"] + " " + found["body"]).lower()
+        for word in summary.lower().split():
+            self.assertIn(word.strip(".,:;?"), haystack)
+        self.assertTrue(keywords)
+
+    def test_the_subject_decides_what_it_is_about(self):
+        self.assertEqual(
+            mail.categorise("Defect report - 12 boards rejected", "hello"),
+            "DEFECT")
+        self.assertEqual(mail.categorise("견적 요청 - 6 layer", ""), "QUOTE")
+        self.assertEqual(mail.categorise("Lunch on Thursday?", "see you"),
+                         "GENERAL")
+
+    def test_reference_numbers_are_picked_out_whole(self):
+        found = mail.find_references(
+            "Re: PO-2026-1188 and quotation QTN-4471, also P.O. 9912")
+        self.assertIn("PO-2026-1188", found["po"])
+        self.assertIn("9912", found["po"])
+        self.assertIn("QTN-4471", found["quote"])
+
+    def test_an_empty_body_does_not_break_the_summary(self):
+        self.assertEqual(mail.summarise("subject only", ""), ("", []))
+
+
+class TestFilingMail(unittest.TestCase):
+    """Where a mail is filed, and how sure the app says it is."""
+
+    def setUp(self):
+        fresh_db()
+        self.company = orders.save_company({
+            "name": "Northwind Industrial GmbH",
+            "contact_email": "haeun@northwind.example"})
+        self.order = orders.create_order({
+            "company": "Northwind Industrial GmbH", "order_no": "OT-2026-0042",
+            "po_number": "PO-2026-1188", "status": "IN PRODUCTION"})
+        self.other = orders.create_order({
+            "company": "Northwind Industrial GmbH", "order_no": "OT-2026-0033",
+            "po_number": "PO-2026-1101", "status": "CONFIRMED"})
+
+    def letter(self, subject, body="Nothing much.", sender=None):
+        sender = sender or "Ha-eun Park <haeun@northwind.example>"
+        return (f"From: {sender}\r\nTo: sales@ourpcb.example\r\n"
+                f"Subject: {subject}\r\n"
+                "Date: Mon, 21 Sep 2026 09:30:00 +0200\r\n"
+                "Content-Type: text/plain; charset=\"utf-8\"\r\n\r\n"
+                f"{body}\r\n").encode()
+
+    def test_a_po_number_in_the_subject_files_it(self):
+        item = mail.intake("a.eml", self.letter("Re: PO-2026-1188 delivery"))
+        self.assertEqual(item["order_id"], self.order)
+        self.assertEqual(item["needs_review"], 0)
+        self.assertGreaterEqual(item["confidence"], 0.9)
+        self.assertIn("PO-2026-1188", item["matched_on"])
+
+    def test_two_orders_named_at_once_files_neither(self):
+        item = mail.intake(
+            "b.eml", self.letter("PO-2026-1188 and PO-2026-1101 both late"))
+        self.assertIsNone(item["order_id"])
+        self.assertEqual(item["needs_review"], 1)
+        self.assertIn("2 different orders", item["matched_on"])
+
+    def test_a_known_sender_finds_the_customer(self):
+        item = mail.intake("c.eml", self.letter("General question"))
+        self.assertEqual(item["company_id"], self.company)
+        self.assertIn("contact address on file", item["matched_on"])
+
+    def test_a_stranger_is_left_in_the_tray(self):
+        item = mail.intake("d.eml", self.letter(
+            "Introduction", sender="someone@unrelated.example"))
+        self.assertIsNone(item["company_id"])
+        self.assertEqual(item["needs_review"], 1)
+        self.assertEqual(item["confidence"], 0.0)
+
+    def test_the_same_mail_twice_is_not_filed_twice(self):
+        raw = self.letter("Re: PO-2026-1188 delivery")
+        first = mail.intake("e.eml", raw)
+        again = mail.intake("e.eml", raw)
+        self.assertTrue(again.get("duplicate"))
+        self.assertEqual(first["id"], again["id"])
+        self.assertEqual(len(mail.list_mail()), 1)
+
+    def test_the_mail_is_kept_as_a_document_and_can_be_searched(self):
+        item = mail.intake("f.eml", self.letter(
+            "Re: PO-2026-1188", "The impedance coupon failed at 48 ohms."))
+        document = documents.get(item["doc_id"])
+        self.assertEqual(document["kind"], "EMAIL")
+        self.assertEqual(document["order_id"], self.order)
+        hits = orders.search("impedance coupon")
+        self.assertTrue(any(h["id"] == item["doc_id"]
+                            for h in hits.get("documents", [])))
+
+    def test_attachments_are_stored_as_documents_of_their_own(self):
+        path = _TMP / "with-po.msg"
+        fixtures.make_msg(
+            path, subject="Re: PO-2026-1188 - purchase order attached",
+            sender_name="Ha-eun Park", sender_email="haeun@northwind.example",
+            body="Please find the order form attached.",
+            attachments=[{"filename": "purchase order.pdf",
+                          "data": fixtures.make_pdf(
+                              ["PURCHASE ORDER", "PO-2026-1188"],
+                              _TMP / "po-in-mail.pdf").read_bytes()}])
+        item = mail.intake("with-po.msg", path.read_bytes())
+        self.assertEqual(item["attachments"], 1)
+        filed = [d["filename"] for d in documents.list_documents(
+            order_id=self.order)]
+        self.assertIn("purchase order.pdf", filed)
+
+    def test_filing_it_by_hand_teaches_the_next_one(self):
+        stranger = "kenji@sakura-denshi.example"
+        first = mail.intake("g.eml", self.letter(
+            "Nothing recognisable here", sender=stranger))
+        self.assertEqual(first["needs_review"], 1)
+        mail.assign(first["id"], order_id=self.order)
+
+        second = mail.intake("h.eml", self.letter(
+            "Another one, still nothing recognisable", sender=stranger))
+        self.assertEqual(second["company_id"], self.company)
+        self.assertIn("has been filed to this customer", second["matched_on"])
+
+    def test_a_mail_dropped_on_an_order_goes_straight_there(self):
+        item = mail.intake("i.eml", self.letter("No reference at all"),
+                           order_id=self.other, actor="YJ")
+        self.assertEqual(item["order_id"], self.other)
+        self.assertEqual(item["needs_review"], 0)
+        self.assertIn("filed by hand", item["matched_on"])
+
+    def test_deleting_a_mail_takes_its_stored_copy_with_it(self):
+        item = mail.intake("j.eml", self.letter("Re: PO-2026-1188"))
+        doc_id = item["doc_id"]
+        mail.delete(item["id"])
+        self.assertIsNone(documents.get(doc_id))
+        self.assertEqual(mail.tray()["total"], 0)
+
+
+# ------------------------------------------------------- disputes and cases
+
+class TestCases(unittest.TestCase):
+
+    def setUp(self):
+        fresh_db()
+        self.order = orders.create_order({
+            "company": "Northwind Industrial GmbH", "order_no": "OT-2026-0042",
+            "po_number": "PO-2026-1188", "status": "IN PRODUCTION"})
+
+    def open_one(self, **extra):
+        data = {"order_id": self.order, "title": "12 boards, open circuits",
+                "kind": "DEFECT", "severity": "HIGH", "qty_affected": 12,
+                "claim_krw": "1,250,000"}
+        data.update(extra)
+        return cases.open_case(data, actor="YJ")
+
+    def test_a_case_needs_an_order_and_a_title(self):
+        with self.assertRaises(cases.CaseError):
+            cases.open_case({"title": "no order"})
+        with self.assertRaises(cases.CaseError):
+            cases.open_case({"order_id": self.order, "title": "   "})
+
+    def test_opening_one_records_the_position_and_starts_the_log(self):
+        case = cases.get_case(self.open_one())
+        self.assertTrue(case["ref"].startswith("C-"))
+        self.assertEqual(case["qty_affected"], 12)
+        self.assertEqual(case["claim_krw"], 1250000.0)
+        self.assertEqual(case["status"], "OPEN")
+        self.assertTrue(case["open"])
+        self.assertEqual(len(case["entries"]), 1)
+        self.assertIn("Case opened", case["entries"][0]["summary"])
+        self.assertTrue(case["due_at"], "a case should come with a date to "
+                                        "answer by")
+
+    def test_references_count_up_within_the_year(self):
+        first = cases.get_case(self.open_one())["ref"]
+        second = cases.get_case(self.open_one(title="another"))["ref"]
+        self.assertEqual(int(second[-3:]), int(first[-3:]) + 1)
+
+    def test_the_log_keeps_what_was_said_and_when(self):
+        case_id = self.open_one()
+        cases.add_entry(case_id, {
+            "kind": "CALL", "happened_at": "2026-09-21", "who": "Ha-eun Park",
+            "summary": "Customer wants rework or a credit note",
+            "detail": "Asked for an answer by Friday.",
+            "follow_up_at": "2026-09-23"})
+        case = cases.get_case(case_id)
+        entry = [e for e in case["entries"] if e["kind"] == "CALL"][0]
+        self.assertEqual(entry["happened_at"], "2026-09-21")
+        self.assertEqual(entry["who"], "Ha-eun Park")
+        self.assertEqual(entry["follow_up_at"], "2026-09-23")
+        self.assertEqual(case["open_actions"], 1)
+
+    def test_an_entry_has_to_say_something(self):
+        case_id = self.open_one()
+        with self.assertRaises(cases.CaseError):
+            cases.add_entry(case_id, {"kind": "NOTE", "summary": ""})
+
+    def test_settling_a_case_dates_it_and_logs_the_move(self):
+        case_id = self.open_one()
+        case = cases.update_case(case_id, {"status": "RESOLVED",
+                                           "resolution": "Credit note issued"},
+                                 actor="YJ")
+        self.assertFalse(case["open"])
+        self.assertTrue(case["closed_at"])
+        self.assertTrue(any("Status moved from OPEN to RESOLVED" in e["summary"]
+                            for e in case["entries"]))
+
+    def test_reopening_clears_the_closing_date(self):
+        case_id = self.open_one()
+        cases.update_case(case_id, {"status": "CLOSED"})
+        case = cases.update_case(case_id, {"status": "INVESTIGATING"})
+        self.assertIsNone(case["closed_at"])
+        self.assertTrue(case["open"])
+
+    def test_overdue_follow_ups_are_listed_first_and_marked(self):
+        case_id = self.open_one()
+        yesterday = (datetime.date.today()
+                     - datetime.timedelta(days=1)).isoformat()
+        tomorrow = (datetime.date.today()
+                    + datetime.timedelta(days=1)).isoformat()
+        cases.add_entry(case_id, {"summary": "chase the factory",
+                                  "follow_up_at": tomorrow})
+        cases.add_entry(case_id, {"summary": "send the proposal",
+                                  "follow_up_at": yesterday})
+        due = cases.follow_ups(7)
+        self.assertEqual([f["summary"] for f in due],
+                         ["send the proposal", "chase the factory"])
+        self.assertTrue(due[0]["late"])
+        self.assertFalse(due[1]["late"])
+
+    def test_ticking_an_action_off_takes_it_out_of_the_list(self):
+        case_id = self.open_one()
+        entry_id = cases.add_entry(case_id, {
+            "summary": "send the proposal",
+            "follow_up_at": datetime.date.today().isoformat()})
+        self.assertEqual(len(cases.follow_ups(7)), 1)
+        cases.complete_follow_up(entry_id)
+        self.assertEqual(cases.follow_ups(7), [])
+
+    def test_a_closed_case_stops_nagging(self):
+        case_id = self.open_one()
+        cases.add_entry(case_id, {"summary": "chase",
+                                  "follow_up_at": datetime.date.today().isoformat()})
+        self.assertEqual(cases.summary()["open_actions"], 1)
+        cases.update_case(case_id, {"status": "CLOSED"})
+        self.assertEqual(cases.summary()["open_actions"], 0)
+        self.assertEqual(cases.summary()["open"], 0)
+
+    def test_the_money_at_stake_adds_up_across_open_cases(self):
+        self.open_one()
+        self.open_one(title="short shipment", claim_krw=320000)
+        self.assertEqual(cases.summary()["claim_krw"], 1570000.0)
+
+    def test_deleting_an_order_takes_its_cases_with_it(self):
+        case_id = self.open_one()
+        orders.delete_order(self.order)
+        self.assertIsNone(cases.get_case(case_id))
+
+    def test_the_printed_report_carries_the_whole_log(self):
+        case_id = self.open_one()
+        cases.add_entry(case_id, {"kind": "CALL", "who": "Mr Cho",
+                                  "summary": "Factory will cross-section it",
+                                  "detail": "Report due Wednesday."})
+        page = printsheet.case_sheet(case_id)
+        self.assertIn("Factory will cross-section it", page)
+        self.assertIn("Report due Wednesday.", page)
+        self.assertIn("1,250,000 KRW", page)
+        self.assertIn("LOG OF COMMUNICATIONS AND ACTIONS".title().upper(),
+                      page.upper())
+
+    def test_a_case_for_a_missing_order_is_refused(self):
+        with self.assertRaises(cases.CaseError):
+            cases.open_case({"order_id": 999999, "title": "nowhere"})
+
+
+# --------------------------------------------------------- the front end
+
+class TestFrontEndScripts(unittest.TestCase):
+    """Guards for the things a no-build, many-script front end gets wrong."""
+
+    def scripts(self):
+        return sorted((ROOT / "web").glob("*.js"))
+
+    def test_no_two_scripts_declare_the_same_name(self):
+        """Classic scripts share one global scope.
+
+        A second `const krw` anywhere on the page throws before a line of
+        that file runs, which silently takes out a whole view. It costs
+        nothing to check and is invisible when it happens.
+        """
+        import re
+        declared = {}
+        clashes = []
+        pattern = re.compile(r"^(?:function|const|let|var|class)\s+"
+                             r"([A-Za-z_$][\w$]*)", re.M)
+        for script in self.scripts():
+            for name in pattern.findall(script.read_text(encoding="utf-8")):
+                if name in declared and declared[name] != script.name:
+                    clashes.append(f"{name}: {declared[name]} and {script.name}")
+                declared[name] = script.name
+        self.assertEqual(clashes, [], "two scripts declare the same name")
+
+    def test_every_script_the_page_asks_for_exists(self):
+        import re
+        page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        for src in re.findall(r'<script src="/([^"]+)"', page):
+            self.assertTrue((ROOT / "web" / src).is_file(), f"missing {src}")
+
+    def test_the_views_in_the_page_match_the_ones_in_the_code(self):
+        import re
+        page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        buttons = set(re.findall(r'data-view="(\w+)"', page))
+        sections = set(re.findall(r'id="view-(\w+)"', page))
+        self.assertTrue(buttons <= sections,
+                        "a nav button has no section to show")
+        app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        listed = set(re.findall(r"'(\w+)'",
+                                re.search(r"const NAV_VIEWS = \[(.*?)\]", app,
+                                          re.S).group(1)))
+        self.assertEqual(listed, buttons)
+
+
+# -------------------------------------------- a machine that refuses writes
+
+class TestLockedDownMachine(unittest.TestCase):
+    """Some work computers let only approved programs write files.
+
+    Python is then refused the per-user settings folder and the system
+    temporary folder, while the app's own folder — on a personal drive —
+    takes files perfectly well. Nothing about that should stop the app.
+    """
+
+    def setUp(self):
+        from ordertracker import settings
+        self.settings = settings
+        self.home = Path(tempfile.mkdtemp(prefix="ot-locked-"))
+        self.app = self.home / "app"
+        self.app.mkdir()
+        self.blocked = self.home / "blocked"
+        # A file where a folder should be: nothing can be written inside it,
+        # which is what a refused folder looks like from here.
+        self.blocked.write_text("not a folder", encoding="utf-8")
+
+        self._env = {k: os.environ.get(k) for k in
+                     ("XDG_CONFIG_HOME", "LOCALAPPDATA", "HOME")}
+        os.environ["XDG_CONFIG_HOME"] = str(self.blocked)
+        os.environ["LOCALAPPDATA"] = str(self.blocked)
+        os.environ["HOME"] = str(self.blocked)
+        self._marker = settings.PORTABLE_MARKER
+        settings.PORTABLE_MARKER = self.app / "portable.txt"
+
+    def tearDown(self):
+        self.settings.PORTABLE_MARKER = self._marker
+        for key, value in self._env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        shutil.rmtree(self.home, ignore_errors=True)
+
+    def test_settings_fall_back_to_the_app_folder(self):
+        written = self.settings.save(welcome_name="김영진")
+        self.assertEqual(written, self.app / "settings.json")
+        self.assertEqual(self.settings.load()["welcome_name"], "김영진")
+
+    def test_the_usual_place_is_still_preferred(self):
+        os.environ["XDG_CONFIG_HOME"] = str(self.home / "ok")
+        os.environ["LOCALAPPDATA"] = str(self.home / "ok")
+        written = self.settings.save(welcome_name="Rachel")
+        self.assertTrue(str(written).startswith(str(self.home / "ok")))
+
+    def test_the_scratch_folder_moves_next_to_the_data(self):
+        import tempfile as tempfile_module
+        saved_dir = tempfile_module.tempdir
+        try:
+            scratch = config.use_own_temp(self.home / "data" / ".scratch")
+            self.assertEqual(scratch, self.home / "data" / ".scratch")
+            self.assertEqual(tempfile_module.tempdir, str(scratch))
+            with tempfile_module.NamedTemporaryFile(suffix=".pdf") as handle:
+                self.assertTrue(str(handle.name).startswith(str(scratch)))
+        finally:
+            tempfile_module.tempdir = saved_dir
+
+    def test_a_scratch_folder_that_cannot_be_made_is_left_alone(self):
+        import tempfile as tempfile_module
+        saved_dir = tempfile_module.tempdir
+        try:
+            self.assertIsNone(config.use_own_temp(self.blocked / "scratch"))
+            self.assertEqual(tempfile_module.tempdir, saved_dir)
+        finally:
+            tempfile_module.tempdir = saved_dir
+
+    def test_old_scratch_files_are_cleared_away(self):
+        scratch = self.home / "data" / ".scratch"
+        scratch.mkdir(parents=True)
+        stale = scratch / "old.pdf"
+        stale.write_bytes(b"%PDF")
+        fresh = scratch / "new.pdf"
+        fresh.write_bytes(b"%PDF")
+        two_days = time.time() - 2 * 86400
+        os.utime(stale, (two_days, two_days))
+        import tempfile as tempfile_module
+        saved_dir = tempfile_module.tempdir
+        try:
+            config.use_own_temp(scratch)
+        finally:
+            tempfile_module.tempdir = saved_dir
+        self.assertFalse(stale.exists())
+        self.assertTrue(fresh.exists())

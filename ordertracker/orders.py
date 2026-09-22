@@ -64,6 +64,11 @@ def _parse_date(value):
     return None
 
 
+def as_date(value):
+    """The date in a value people typed, or None. Used across the app."""
+    return _parse_date(value)
+
+
 def normalise_date(value) -> str | None:
     """Accept the date formats people actually paste in; store one of them.
 
@@ -444,6 +449,22 @@ def save_company(data: dict) -> int:
         name = (data.get("name") or "").strip()
         if not name:
             raise OrderError("A company name is required.")
+
+        # Saving a customer who is already on file means updating them.
+        # Two rows with the same name is not something the form can ask
+        # for, and refusing the save outright only loses what was typed.
+        existing = conn.execute(
+            "SELECT id FROM companies WHERE name = ?", (name,)).fetchone()
+        if existing:
+            sets = [f"{f} = ?" for f in fields if f in data and f != "name"]
+            if sets:
+                conn.execute(
+                    f"UPDATE companies SET {', '.join(sets)} WHERE id = ?",
+                    [*(data[f] for f in fields if f in data and f != "name"),
+                     existing["id"]])
+                db.touch(conn)
+            return int(existing["id"])
+
         cur = conn.execute(
             """INSERT INTO companies(name, code, contact_name, contact_email,
                                      phone, notes, country, city, lat, lon,

@@ -16,6 +16,11 @@ from pathlib import Path
 
 APP_NAME = "OrderTracker"
 
+
+class SettingsError(Exception):
+    """Nowhere would take the settings file."""
+
+
 # Computed here rather than read from config, which imports this module.
 PORTABLE_MARKER = Path(__file__).resolve().parent.parent / "portable.txt"
 
@@ -53,18 +58,35 @@ def settings_path() -> Path:
     return settings_dir() / "settings.json"
 
 
-def _read_order() -> list[Path]:
-    """Files to try, best first.
+def app_dir() -> Path:
+    """The folder run.py sits in."""
+    return PORTABLE_MARKER.parent
+
+
+def _places() -> list[Path]:
+    """Folders that may hold this copy's settings, best first.
+
+    Two fallbacks, for two different situations:
 
     A folder that has only just been made portable has no settings of its
     own yet, so this machine's copy is read instead and carried over the
     first time anything is saved. Nothing is lost in the changeover.
+
+    Going the other way, some work computers let only approved programs
+    write files, so Python is refused the per-user settings folder even
+    though it can write perfectly well beside run.py. Falling back to the
+    app folder means a locked-down machine still remembers your choices.
     """
-    paths = [settings_path()]
-    machine = machine_dir() / "settings.json"
-    if portable() and machine not in paths:
-        paths.append(machine)
-    return paths
+    places = [settings_dir()]
+    for extra in (machine_dir(), app_dir()):
+        if extra not in places:
+            places.append(extra)
+    return places
+
+
+def _read_order() -> list[Path]:
+    """Files to try, best first."""
+    return [folder / "settings.json" for folder in _places()]
 
 
 def read_file(path: Path) -> dict | None:
@@ -99,10 +121,24 @@ def dump(path, values: dict) -> Path:
 
 
 def save(**changes) -> Path:
-    """Update the saved settings and return where they were written."""
+    """Update the saved settings and return where they were written.
+
+    Tries each place in turn so that a machine which refuses one of them
+    still keeps the setting somewhere this copy will read it back from.
+    """
     values = load()
     values.update({k: v for k, v in changes.items() if k in DEFAULTS})
-    return dump(settings_path(), values)
+    refused = None
+    for folder in _places():
+        try:
+            return dump(folder / "settings.json", values)
+        except OSError as exc:
+            refused = refused or exc
+    raise SettingsError(
+        "Your choice could not be saved. Neither of these folders would "
+        "take a file:\n    " + "\n    ".join(str(p) for p in _places())
+        + f"\n\nThe first refusal was: {refused}"
+    )
 
 
 def expand(folder: str) -> Path:

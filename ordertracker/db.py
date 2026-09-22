@@ -14,7 +14,7 @@ from . import config, drives
 
 _local = threading.local()
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def now() -> str:
@@ -325,6 +325,88 @@ CREATE TABLE IF NOT EXISTS order_specs (
 
     updated_at        TEXT NOT NULL
 );
+
+-- Email that has been uploaded and read. The mail itself is kept as an
+-- ordinary document, so it is searchable and downloadable like anything
+-- else; this table holds what was worked out about it — who sent it, what
+-- it is about, and which order it was filed against.
+CREATE TABLE IF NOT EXISTS emails (
+    id           INTEGER PRIMARY KEY,
+    doc_id       INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+    order_id     INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+    company_id   INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+    case_id      INTEGER,
+    direction    TEXT DEFAULT 'IN',
+    message_key  TEXT UNIQUE,
+    sent_at      TEXT,
+    from_name    TEXT,
+    from_email   TEXT,
+    from_domain  TEXT,
+    to_addrs     TEXT,
+    subject      TEXT,
+    summary      TEXT,
+    keywords     TEXT,
+    category     TEXT,
+    refs         TEXT,
+    confidence   REAL DEFAULT 0,
+    matched_on   TEXT,
+    needs_review INTEGER DEFAULT 1,
+    attachments  INTEGER DEFAULT 0,
+    filed_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_emails_order   ON emails(order_id);
+CREATE INDEX IF NOT EXISTS idx_emails_company ON emails(company_id);
+CREATE INDEX IF NOT EXISTS idx_emails_sender  ON emails(from_email);
+CREATE INDEX IF NOT EXISTS idx_emails_review  ON emails(needs_review);
+
+-- A dispute, a defect claim, or anything else that needs chasing on an
+-- order. The case holds the position; case_entries holds every call, mail
+-- and action taken about it, which is what actually settles an argument
+-- six months later.
+CREATE TABLE IF NOT EXISTS cases (
+    id           INTEGER PRIMARY KEY,
+    ref          TEXT NOT NULL UNIQUE,
+    order_id     INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+    company_id   INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+    title        TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    severity     TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    opened_at    TEXT NOT NULL,
+    due_at       TEXT,
+    closed_at    TEXT,
+    qty_affected INTEGER,
+    claim_krw    REAL,
+    lot_ref      TEXT,
+    detail       TEXT,
+    root_cause   TEXT,
+    resolution   TEXT,
+    owner        TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cases_order  ON cases(order_id);
+CREATE INDEX IF NOT EXISTS idx_cases_status ON cases(status);
+
+CREATE TABLE IF NOT EXISTS case_entries (
+    id           INTEGER PRIMARY KEY,
+    case_id      INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    kind         TEXT NOT NULL,
+    happened_at  TEXT NOT NULL,
+    who          TEXT,
+    summary      TEXT NOT NULL,
+    detail       TEXT,
+    doc_id       INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+    email_id     INTEGER REFERENCES emails(id) ON DELETE SET NULL,
+    follow_up_at TEXT,
+    done_at      TEXT,
+    created_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_entries_case ON case_entries(case_id, happened_at);
+CREATE INDEX IF NOT EXISTS idx_entries_due  ON case_entries(follow_up_at);
 
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,

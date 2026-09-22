@@ -10,7 +10,7 @@ import email.policy
 import random
 import zlib
 
-from . import db, documents, orders
+from . import cases, db, documents, mail as mailbox, orders
 
 COMPANIES = [
     # name, code, contact, email, country, city
@@ -89,12 +89,18 @@ def _pdf(lines) -> bytes:
     return bytes(out)
 
 
-def _eml(sender, sender_name, subject, body, attachment=None) -> bytes:
+def _eml(sender, sender_name, subject, body, attachment=None, when=None) -> bytes:
     msg = email.message.EmailMessage()
     msg["From"] = f"{sender_name} <{sender}>"
     msg["To"] = "sales@yourcompany.example"
     msg["Subject"] = subject
-    msg["Date"] = email.utils.formatdate(localtime=True)
+    # Demo mail is spread over the weeks the orders ran, so the tray sorts
+    # like a real one instead of arriving all at the same second.
+    if when is None:
+        msg["Date"] = email.utils.formatdate(localtime=True)
+    else:
+        msg["Date"] = email.utils.format_datetime(
+            datetime.datetime.combine(when, datetime.time(9, 20)))
     msg.set_content(body)
     if attachment:
         name, data = attachment
@@ -285,16 +291,21 @@ def load(seed: int = 7) -> dict:
             docs += 1
 
         if index % 3 == 0:
-            mail = _eml(
+            # Put it through the mail reader rather than storing it as a
+            # file, so the demo inbox shows real matching and real summaries
+            # rather than a list of filenames.
+            letter = _eml(
                 contact[3], contact[2],
                 f"{po_number} — delivery schedule for {order_no}",
                 f"Hello,\n\nCould you confirm the delivery date on {order_no} "
                 f"({po_number})? Our production plan currently assumes "
-                f"{promise_date.isoformat()}.\n\nThe item is {product}.\n\n"
+                f"{promise_date.isoformat()}.\n\nThe item is {product}.\n"
+                f"If the date has moved, please tell us this week so we can "
+                f"replan the line.\n\n"
                 f"Best regards,\n{contact[2]}\n{company}\n",
+                when=order_date + datetime.timedelta(days=rng.randint(1, 6)),
             )
-            documents.store(f"RE {po_number} delivery schedule.eml", mail,
-                            order_id=order_id)
+            mailbox.intake(f"RE {po_number} delivery schedule.eml", letter)
             docs += 1
 
         if status in ("INVOICED", "PAID"):
@@ -322,4 +333,98 @@ def load(seed: int = 7) -> dict:
     documents.store("packing list scan.pdf", loose)
     docs += 1
 
-    return {"companies": len(COMPANIES), "orders": created, "documents": docs}
+    emails = _demo_inbox()
+    disputes = _demo_cases(today)
+
+    return {"companies": len(COMPANIES), "orders": created, "documents": docs,
+            "emails": emails, "cases": disputes}
+
+
+def _demo_inbox() -> int:
+    """A few mails that do not file themselves, so the tray has work in it."""
+    stray = [
+        ("procurement@newcomer-ems.example", "Procurement",
+         "Introduction and capability request",
+         "Good afternoon,\n\nWe are a contract manufacturer looking for a new "
+         "PCB supplier for small and medium volumes.\nCould you send your "
+         "capability sheet, minimum trace and space, and your standard lead "
+         "times?\nWe would start with a trial order of around 100 pieces.\n\n"
+         "Regards,\nProcurement\n"),
+        ("k.sato@northwind-industrial.example", "Kenji Sato",
+         "Quality escalation — repeated solder mask chipping",
+         "Dear supplier,\n\nWe have now seen solder mask chipping on three "
+         "consecutive deliveries.\nThe chipping is along the board edge on "
+         "the routed side, about 0.5mm in.\nPlease investigate the routing "
+         "step and tell us what you will change.\nWe need an 8D report by "
+         "the end of next week.\n\nRegards,\nKenji Sato\n"),
+    ]
+    today = datetime.date.today()
+    for days, (sender, name, subject, body) in zip((2, 5), stray):
+        mailbox.intake(f"{subject[:40]}.eml",
+                       _eml(sender, name, subject, body,
+                            when=today - datetime.timedelta(days=days)))
+    return len(mailbox.list_mail())
+
+
+def _demo_cases(today) -> int:
+    """Two disputes, one being worked and one settled, each with its log."""
+    conn = db.connect()
+    live = conn.execute(
+        """SELECT id, order_no FROM orders
+           WHERE status = 'IN PRODUCTION' ORDER BY id LIMIT 1""").fetchone()
+    done = conn.execute(
+        """SELECT id, order_no FROM orders
+           WHERE status IN ('DELIVERED', 'PAID') ORDER BY id LIMIT 1""").fetchone()
+    if live is None:
+        return 0
+
+    day = datetime.timedelta(days=1)
+    open_case = cases.open_case({
+        "order_id": live["id"],
+        "title": "12 boards with open circuits on layer 4",
+        "kind": "DEFECT", "severity": "HIGH", "qty_affected": 12,
+        "claim_krw": 1250000, "lot_ref": "lot 3, working panel AJ(6)",
+        "opened_at": (today - 3 * day).isoformat(),
+        "due_at": (today + 2 * day).isoformat(),
+        "owner": "YJ",
+        "detail": "Customer AOI found 12 opens out of 500 delivered, all from "
+                  "one working panel — most likely a single etch or drill "
+                  "issue rather than a process drift.",
+    }, actor="demo")
+    cases.add_entry(open_case, {
+        "kind": "EMAIL IN", "happened_at": (today - 3 * day).isoformat(),
+        "who": "Quality, customer side",
+        "summary": "Defect report received with AOI images",
+        "detail": "12 pcs, layer 4 opens. Asked for rework or a credit note."})
+    cases.add_entry(open_case, {
+        "kind": "CALL", "happened_at": (today - 2 * day).isoformat(),
+        "who": "Factory — Mr Cho",
+        "summary": "Asked the factory for the cross-section report",
+        "detail": "Cho will pull the drill log for that panel.",
+        "follow_up_at": (today - 1 * day).isoformat()})
+    cases.add_entry(open_case, {
+        "kind": "DECISION", "happened_at": (today - 1 * day).isoformat(),
+        "who": "YJ", "summary": "Offer rework of 12 pcs plus 5 spares",
+        "detail": "Cheaper than a credit note and keeps their line running.",
+        "follow_up_at": (today + 1 * day).isoformat()})
+
+    made = 1
+    if done is not None:
+        settled = cases.open_case({
+            "order_id": done["id"],
+            "title": "Short shipment — 40 pcs missing from lot 2",
+            "kind": "SHORTAGE", "severity": "MEDIUM", "qty_affected": 40,
+            "claim_krw": 320000, "owner": "YJ",
+            "opened_at": (today - 30 * day).isoformat(),
+            "detail": "Packing list said 500, carton count was 460.",
+        }, actor="demo")
+        cases.add_entry(settled, {
+            "kind": "MEETING", "happened_at": (today - 28 * day).isoformat(),
+            "who": "Warehouse", "summary": "Recount confirmed 460 pieces"})
+        cases.update_case(settled, {
+            "status": "RESOLVED",
+            "root_cause": "One carton left on the packing bench.",
+            "resolution": "40 pcs shipped free of charge on the next flight.",
+        }, actor="demo")
+        made += 1
+    return made

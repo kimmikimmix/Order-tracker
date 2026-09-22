@@ -123,6 +123,10 @@ def main(argv=None):
     from ordertracker import (backup, db, documents, drives, inuse,
                               sampledata, server)
 
+    # Do our temporary work beside the data rather than on the system disk,
+    # which a locked-down work computer may refuse Python entirely.
+    config.use_own_temp()
+
     # On a shared folder, two machines writing at once is the way to lose
     # the lot. Check before anything is opened.
     held = inuse.held_elsewhere()
@@ -145,7 +149,9 @@ def main(argv=None):
             print("  building demo data …")
             counts = sampledata.load()
             print(f"  {counts['orders']} orders, {counts['companies']} companies, "
-                  f"{counts['documents']} documents")
+                  f"{counts['documents']} documents,\n"
+                  f"  {counts['emails']} emails in the tray, "
+                  f"{counts['cases']} open disputes")
 
     if not args.no_backup:
         report = backup.run_quietly()

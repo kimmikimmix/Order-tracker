@@ -54,6 +54,25 @@ DEFAULTS = {
         "ROGERS 4003C", "ROGERS 4350B", "POLYIMIDE", "ALUMINIUM",
     ],
 
+    # --- email intake ------------------------------------------------------
+    # Your own addresses, so mail you sent is marked as going out rather
+    # than coming in. A bare domain counts too: "ourcompany.com".
+    "my_addresses": [],
+    # How sure the matching has to be before a mail files itself. Lower it
+    # to have more filed for you, raise it to check more by hand.
+    "auto_file_confidence": 0.8,
+
+    # --- disputes and defects ----------------------------------------------
+    "case_kinds": ["DEFECT", "SHORTAGE", "DELAY", "WRONG SPEC", "DAMAGE",
+                   "PRICE", "OTHER"],
+    "case_severities": ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+    "case_statuses": ["OPEN", "INVESTIGATING", "AWAITING CUSTOMER",
+                      "AWAITING FACTORY", "RESOLVED", "CLOSED", "REJECTED"],
+    "case_entry_kinds": ["EMAIL IN", "EMAIL OUT", "CALL", "MEETING", "VISIT",
+                         "NOTE", "ACTION", "DECISION"],
+    # A new case is chased by this date unless you set another.
+    "case_due_days": 7,
+
     # --- housekeeping ------------------------------------------------------
     # Second home for your data. Empty means backups are not being taken.
     "backup_dir": "",

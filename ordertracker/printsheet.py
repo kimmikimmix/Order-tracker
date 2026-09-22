@@ -299,3 +299,114 @@ def render(order_id: int) -> str | None:
     {datetime.now().strftime('%d %b %Y %H:%M')}</span>
 </footer>
 </body></html>"""
+
+
+# --- the case report -------------------------------------------------------
+
+def case_sheet(case_id: int) -> str:
+    """A printable report of one dispute: the position and the whole log.
+
+    This is the document you take into a meeting, or attach to a credit
+    note. It has to stand on its own, so every entry is printed in full —
+    a log that hides its detail behind a click proves nothing on paper.
+    """
+    from . import cases
+
+    case = cases.get_case(case_id)
+    if case is None:
+        return ""
+
+    settings = prefs.load()
+    claim_usd = ""
+    if case.get("claim_krw"):
+        rate = float(settings.get("fx_rate") or 1050)
+        claim_usd = f" &nbsp; ({_usd(float(case['claim_krw']) / rate)})"
+
+    position = _rows([
+        ("CUSTOMER", _text(case.get("company"))),
+        ("ORDER", _text(case.get("order_no"))),
+        ("CUSTOMER PO", _text(case.get("po_number"))),
+        ("LOT / BATCH", _text(case.get("lot_ref"))),
+        ("KIND", _text(case.get("kind"))),
+        ("SEVERITY", _text(case.get("severity"))),
+        ("STATUS", _text(case.get("status"))),
+        ("OPENED", _text(case.get("opened_at"))),
+        ("ANSWER DUE", _text(case.get("due_at"))),
+        ("CLOSED", _text(case.get("closed_at"))),
+        ("QUANTITY AFFECTED", _num(case.get("qty_affected"))),
+        ("VALUE CLAIMED", (_krw(case["claim_krw"]) + claim_usd)
+         if case.get("claim_krw") else "—"),
+        ("HANDLED BY", _text(case.get("owner"))),
+    ])
+
+    def block(title, text):
+        if not text:
+            return ""
+        return (f"<h2>{html.escape(title)}</h2><p>"
+                + html.escape(str(text)).replace("\n", "<br>") + "</p>")
+
+    entries = "".join(
+        f"""<tr>
+              <td class="nowrap">{_text(entry.get('happened_at'))}</td>
+              <td class="nowrap">{_text(entry.get('kind'))}</td>
+              <td>{_text(entry.get('who'))}</td>
+              <td>{_text(entry.get('summary'))}
+                {('<div class="detail">'
+                  + html.escape(entry['detail']).replace(chr(10), '<br>')
+                  + '</div>') if entry.get('detail') else ''}
+                {('<div class="detail">file: '
+                  + html.escape(entry['filename']) + '</div>')
+                 if entry.get('filename') else ''}</td>
+              <td class="nowrap">{
+                  (('DONE ' + str(entry['done_at'])[:10]) if entry.get('done_at')
+                   else _text(entry.get('follow_up_at')))}</td>
+            </tr>"""
+        for entry in sorted(case["entries"],
+                            key=lambda e: (e.get("happened_at") or "", e["id"]))
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>{html.escape(case['ref'])} — {html.escape(case['title'])}</title>
+<style>{CSS}
+.detail {{ color:#444; font-size:10.5px; margin-top:3px; white-space:normal }}
+.nowrap {{ white-space:nowrap }}
+table.log th {{ background:#f0f0f0; text-align:left }}
+table.log td {{ vertical-align:top }}
+</style></head>
+<body>
+<div class="toolbar"><button onclick="window.print()">PRINT</button></div>
+
+<div class="head">
+  <div>
+    <h1>{html.escape(case['ref'])}</h1>
+    <p class="sub">{html.escape(case['title'])}<br>
+      {html.escape(case.get('company') or '')}
+      {(' · ' + html.escape(case['order_no'])) if case.get('order_no') else ''}</p>
+  </div>
+  <div style="text-align:right">
+    <div class="badge">{html.escape(case['status'])}</div>
+    <p class="sub" style="margin-top:8px">ORDER TRACKER<br>
+      {datetime.now().strftime('%d %b %Y')}</p>
+  </div>
+</div>
+
+<h2>The position</h2>
+<table>{position}</table>
+
+{block('What is wrong', case.get('detail'))}
+{block('Root cause', case.get('root_cause'))}
+{block('Resolution', case.get('resolution'))}
+
+<h2>Log of communications and actions</h2>
+<table class="log">
+  <tr><th>DATE</th><th>KIND</th><th>WHO</th><th>WHAT HAPPENED</th>
+      <th>FOLLOW-UP</th></tr>
+  {entries or '<tr><td colspan="5" class="none">nothing logged yet</td></tr>'}
+</table>
+
+<footer>
+  <span>{html.escape(case['ref'])} · {html.escape(case.get('company') or '')}</span>
+  <span>printed {datetime.now().strftime('%d %b %Y %H:%M')}</span>
+</footer>
+</body></html>"""
