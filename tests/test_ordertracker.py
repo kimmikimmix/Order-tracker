@@ -753,16 +753,30 @@ class TestMoveToAnotherDrive(unittest.TestCase):
     """Copying the app to another drive must bring the data and stay portable."""
 
     def setUp(self):
+        self.holder = Path(tempfile.mkdtemp(prefix="ot-drive-"))
+        self.target = self.holder / "Order Tracker"
+
+        # Stand the current data somewhere of its own, named as it really is,
+        # so the test measures the data move rather than whatever the working
+        # copy happens to have lying around in data/.
+        self.live = self.holder / "current-data"
+        self.saved = (config.DATA_DIR, config.DOCS_DIR, config.DB_PATH)
+        config.DATA_DIR = self.live
+        config.DOCS_DIR = self.live / "documents"
+        config.DB_PATH = self.live / "orders.db"
+        db._local.__dict__.clear()
         fresh_db()
-        self.target = Path(tempfile.mkdtemp(prefix="ot-drive-")) / "Order Tracker"
 
     def tearDown(self):
-        shutil.rmtree(self.target.parent, ignore_errors=True)
+        config.DATA_DIR, config.DOCS_DIR, config.DB_PATH = self.saved
+        db._local.__dict__.clear()
+        shutil.rmtree(self.holder, ignore_errors=True)
 
     def test_the_copy_is_complete_portable_and_keeps_the_data(self):
         import move_to
 
         orders.create_order({"order_no": "SO-1000", "company": "대한정밀 주식회사"})
+        documents.store("주문서.pdf", b"%PDF-1.4 test", order_id=1)
 
         code = move_to.main([str(self.target), "--no-git", "--no-shortcut"])
         self.assertEqual(code, 0)
@@ -779,6 +793,40 @@ class TestMoveToAnotherDrive(unittest.TestCase):
         names = [row[0] for row in conn.execute("SELECT order_no FROM orders")]
         conn.close()
         self.assertIn("SO-1000", names)
+
+        documents_moved = list((self.target / "data" / "documents").iterdir())
+        self.assertTrue(documents_moved, "the documents did not come across")
+        self.assertTrue(any(f.name.endswith("주문서.pdf") for f in documents_moved))
+
+    def test_uncommitted_wal_contents_survive_the_copy(self):
+        """The database runs in WAL mode, so recent writes sit beside the .db.
+
+        Copying the .db file alone silently loses them, which would move
+        someone's order book across as an empty database.
+        """
+        import move_to
+
+        orders.create_order({"order_no": "SO-WAL", "company": "Acme"})
+
+        # Prove the point: the .db file on its own is missing the write.
+        raw_copy = self.holder / "raw-copy.db"
+        shutil.copyfile(config.DB_PATH, raw_copy)
+        conn = sqlite3.connect(raw_copy)
+        try:
+            rows = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+        except sqlite3.OperationalError:
+            rows = 0          # not even the schema made it into the .db file
+        finally:
+            conn.close()
+        self.assertEqual(rows, 0, "this test no longer proves anything")
+
+        # The backup call gets it.
+        proper = self.holder / "proper-copy.db"
+        move_to.copy_database(config.DB_PATH, proper)
+        conn = sqlite3.connect(proper)
+        names = [r[0] for r in conn.execute("SELECT order_no FROM orders")]
+        conn.close()
+        self.assertIn("SO-WAL", names)
 
     def test_copying_a_folder_into_itself_is_refused(self):
         import move_to

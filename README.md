@@ -243,7 +243,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 75 tests, no dependencies
+python3 -m unittest discover tests     # 76 tests, no dependencies
 ```
 
 The pieces:

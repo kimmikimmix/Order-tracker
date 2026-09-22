@@ -21,9 +21,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ordertracker import config, settings  # noqa: E402
 
-# Nothing here is worth copying.
-SKIP = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", ".DS_Store",
-                              "*.db-wal", "*.db-shm")
+# Nothing here is worth copying. The data folders are excluded too: a live
+# SQLite database must be copied through its own backup call rather than as
+# loose files, or commits still sitting in the write-ahead log are lost.
+JUNK = ("__pycache__", "*.pyc", "*.pyo", ".DS_Store")
+SKIP = shutil.ignore_patterns(*JUNK, "data", "demo-data")
+SKIP_NO_GIT = shutil.ignore_patterns(*JUNK, "data", "demo-data", ".git")
+SKIP_JUNK_ONLY = shutil.ignore_patterns(*JUNK)
+
+
+def copy_database(source_db: Path, target_db: Path) -> None:
+    """Copy a SQLite database safely, even while the app is running.
+
+    SQLite's own backup call reads a consistent snapshot including anything
+    still in the write-ahead log, which copying the .db file on its own
+    would leave behind.
+    """
+    target_db.parent.mkdir(parents=True, exist_ok=True)
+    source_conn = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True, timeout=30)
+    try:
+        target_conn = sqlite3.connect(target_db, timeout=30)
+        try:
+            source_conn.backup(target_conn)
+        finally:
+            target_conn.close()
+    finally:
+        source_conn.close()
 
 
 def usable(folder: Path) -> tuple[bool, str]:
@@ -94,13 +117,10 @@ def main(argv=None):
         print("  be overwritten; anything else there is left alone.\n")
 
     # --- copy the app ----------------------------------------------------
-    ignore = SKIP
-    if args.no_git:
-        ignore = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo",
-                                        ".DS_Store", "*.db-wal", "*.db-shm",
-                                        ".git")
     try:
-        shutil.copytree(source, destination, ignore=ignore, dirs_exist_ok=True)
+        shutil.copytree(source, destination,
+                        ignore=SKIP_NO_GIT if args.no_git else SKIP,
+                        dirs_exist_ok=True)
     except OSError as exc:
         print(f"  The copy failed: {exc}")
         print("  Nothing has been changed in the original folder.\n")
@@ -110,16 +130,29 @@ def main(argv=None):
     # --- bring the data, wherever it currently lives ---------------------
     data_source = config.DATA_DIR.resolve()
     data_target = destination / "data"
-    if data_source.exists() and not is_inside(data_source, source):
+    db_source = config.DB_PATH.resolve()
+
+    if db_source.exists():
         try:
-            shutil.copytree(data_source, data_target, ignore=SKIP, dirs_exist_ok=True)
-            print(f"  [ ok ] copied your orders from {data_source}")
-        except OSError as exc:
-            print(f"\n  The app was copied, but your data was not: {exc}")
-            print(f"  Copy {data_source} to {data_target} by hand, then carry on.\n")
+            copy_database(db_source, data_target / db_source.name)
+        except (sqlite3.Error, OSError) as exc:
+            print(f"\n  The app was copied, but your orders were not: {exc}")
+            print("  Close Order Tracker if it is running, then try again.\n")
             return 1
-    elif data_source.exists():
-        print("  [ ok ] your orders came across with the app")
+        print(f"  [ ok ] copied your orders from {db_source}")
+
+        documents_source = config.DOCS_DIR.resolve()
+        if documents_source.exists():
+            try:
+                shutil.copytree(documents_source, data_target / "documents",
+                                ignore=SKIP_JUNK_ONLY, dirs_exist_ok=True)
+            except OSError as exc:
+                print(f"\n  Your orders came across but the documents did not: {exc}")
+                print(f"  Copy {documents_source} to {data_target / 'documents'} "
+                      "by hand.\n")
+                return 1
+            how_many = sum(1 for _ in (data_target / "documents").iterdir())
+            print(f"  [ ok ] copied {how_many} document(s)")
     else:
         print("  [ -- ] nothing stored yet, so the copy starts empty")
 
