@@ -22,6 +22,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ordertracker import config  # noqa: E402
 
 
+def already_running(host: str, port: int) -> bool:
+    """True when an Order Tracker is already serving on this port."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/api/ping", timeout=2) as r:
+            return json.loads(r.read()).get("app") == "order-tracker"
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
 def port_is_free(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -46,15 +59,26 @@ def main(argv=None):
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--reindex", action="store_true",
                         help="re-read the text of every stored document before starting")
+    parser.add_argument("--where", action="store_true",
+                        help="print where the data is kept, then exit")
     args = parser.parse_args(argv)
 
     # An explicit --data folder wins over the demo default.
     if args.data:
         config.DATA_DIR = Path(os.path.expandvars(args.data)).expanduser().resolve()
     elif args.demo:
-        config.DATA_DIR = config.DATA_DIR.parent / "demo-data"
+        config.DATA_DIR = config.DEMO_DIR
     config.DOCS_DIR = config.DATA_DIR / "documents"
     config.DB_PATH = config.DATA_DIR / "orders.db"
+
+    if args.where:
+        from ordertracker import settings
+        print(f"\n  data folder      {config.DATA_DIR}")
+        print(f"  settings file    {settings.settings_path()}")
+        chosen = settings.load().get("workspace") or ""
+        print(f"  chosen location  {chosen or '(none — using the app folder)'}")
+        print("\n  Change it with:  py setup.py\n")
+        return 0
 
     from ordertracker import db, documents, sampledata, server
 
@@ -81,6 +105,17 @@ def main(argv=None):
         print(f"  {documents.reextract_all()} documents re-read")
 
     port = args.port
+
+    # Double-clicking the desktop icon twice should bring the window back,
+    # not start a second copy on a different port.
+    if not port_is_free(args.host, port) and already_running(args.host, port):
+        url = f"http://{args.host}:{port}/"
+        print(f"\n  Order Tracker is already running at {url}")
+        print("  Opening it again.\n")
+        if not args.no_browser:
+            webbrowser.open(url)
+        return 0
+
     if not port_is_free(args.host, port):
         for candidate in range(port + 1, port + 25):
             if port_is_free(args.host, candidate):

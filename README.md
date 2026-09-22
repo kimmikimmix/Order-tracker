@@ -42,14 +42,32 @@ refresh statuses in bulk.
 **Keyboard-first.** `/` to search, `1`–`5` for views, `j`/`k` to move down the
 blotter, `enter` to open, `n` for a new order, `esc` to close.
 
+## Setting it up
+
+Run this once. It asks where to keep your data, offers to move anything
+already stored, and puts a shortcut on the desktop:
+
+```bash
+python3 setup.py               # Windows: py setup.py
+```
+
+Pick any folder on any drive — an external or network drive is fine. The
+choice is remembered outside the app folder, so updating or re-downloading
+the app never moves your orders. Run `setup.py` again any time to change it.
+
 ## Running it
 
 You need Python 3.10 or newer. Nothing else — no `pip install`, no Node, no
 database to set up.
 
+Double-click the desktop shortcut, or:
+
 ```bash
 python3 run.py
 ```
+
+Starting it a second time just reopens the browser rather than running two
+copies.
 
 It opens `http://127.0.0.1:8787/` in your browser. Press `Ctrl+C` to stop.
 
@@ -67,6 +85,7 @@ python3 run.py --port 9000     # if 8787 is taken (it will find a free port anyw
 python3 run.py --no-browser    # don't open a browser
 python3 run.py --reindex       # re-read the text of every stored document
 python3 run.py --data FOLDER   # keep orders and documents somewhere else
+python3 run.py --where         # print where the data is kept, then exit
 ```
 
 ### If it won't start
@@ -96,18 +115,37 @@ run the command above.
 
 ## Where your data lives
 
-Everything is in one folder:
+Wherever you pointed `setup.py`, in one folder:
 
 ```
-data/
-  orders.db          all orders, customers, history and extracted text
-  documents/         the original files, exactly as you dropped them in
+<your folder>/
+  data/
+    orders.db        all orders, customers, history and extracted text
+    documents/       the original files, exactly as you dropped them in
+  demo-data/         the sample order book, kept well away from the real one
 ```
+
+If you never ran `setup.py`, it sits beside the app instead. `python3 run.py
+--where` always tells you.
 
 Back it up by copying that folder. Move it to another machine by copying it
-there. There is no other state.
+there. There is no other state — the only thing kept elsewhere is a small
+settings file recording your chosen folder and welcome name:
 
-`data/` is excluded from git, so customer information is never committed.
+| | |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\OrderTracker\settings.json` |
+| macOS | `~/Library/Application Support/OrderTracker/settings.json` |
+| Linux | `~/.config/order-tracker/settings.json` |
+
+Data folders are excluded from git, so customer information is never
+committed.
+
+## The welcome screen
+
+`setup.py` asks for a name to greet you with at startup. To change it later,
+run `setup.py` again, or edit `welcome_name` in the settings file above.
+Setting `show_welcome` to `false` there turns the splash off entirely.
 
 ## Making it yours
 
@@ -144,15 +182,19 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 50 tests, no dependencies
+python3 -m unittest discover tests     # 60 tests, no dependencies
 ```
 
 The pieces:
 
 ```
 run.py                      entry point
+setup.py                    first-run wizard: storage folder, shortcut, name
+doctor.py                   startup check when something will not run
 ordertracker/
   config.py                 pipeline, thresholds, paths — edit this first
+  settings.py               remembered storage folder and welcome name
+  shortcut.py               desktop shortcut for Windows, macOS and Linux
   db.py                     SQLite schema and full-text indexes
   orders.py                 order logic, alerts, search, dashboard
   documents.py              file storage, classification, auto-filing
@@ -163,6 +205,7 @@ ordertracker/
   sampledata.py             the --demo order book
   extract/                  text out of PDFs, emails, Office files, HTML
 web/                        the single-page front end (no build step)
+assets/                     app icon (regenerate with tools/make_icon.py)
 tests/                      the test suite
 ```
 

@@ -387,3 +387,61 @@ button.btn:disabled { opacity: .4; cursor: not-allowed; }
 pre.textdump { white-space: pre-wrap; font-size: 11px; color: var(--text);
                background: var(--bg); border: 1px solid var(--line);
                padding: 10px; max-height: 60vh; overflow: auto; }
+
+/* ---------- welcome splash ---------- */
+
+#splash {
+  position: fixed; inset: 0; z-index: 200;
+  background: radial-gradient(ellipse at 50% 42%, #16181d 0%, #0a0a0b 62%);
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity .45s ease, visibility .45s ease;
+}
+:root.no-splash #splash,
+#splash.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+
+.splashinner { text-align: center; animation: rise .5s ease-out; }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+
+.splashmark {
+  width: 84px; height: 84px; image-rendering: auto;
+  margin-bottom: 20px; border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(255, 160, 40, .16);
+}
+
+.splashhello {
+  font-size: 30px; letter-spacing: 11px; color: var(--amber);
+  font-weight: 700; text-indent: 11px;
+}
+
+.splashname {
+  margin-top: 6px; font-size: 14px; color: var(--text);
+  letter-spacing: 2px; min-height: 18px;
+}
+
+.splashbrand {
+  margin-top: 16px; font-size: 11px; letter-spacing: 5px; color: var(--dim);
+  text-indent: 5px;
+}
+.splashbrand span { color: var(--dimmer); }
+
+.splashbar {
+  width: 190px; height: 2px; margin: 22px auto 0;
+  background: var(--line); overflow: hidden; border-radius: 2px;
+}
+.splashbar > span {
+  display: block; width: 40%; height: 100%; background: var(--amber);
+  animation: sweep 1.15s ease-in-out infinite;
+}
+@keyframes sweep {
+  0%   { transform: translateX(-105%); }
+  100% { transform: translateX(355%); }
+}
+
+.splashhint {
+  margin-top: 12px; font-size: 10.5px; color: var(--dimmer); letter-spacing: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splashinner { animation: none; }
+  .splashbar > span { animation: none; width: 100%; }
+}

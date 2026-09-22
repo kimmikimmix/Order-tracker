@@ -1,6 +1,7 @@
 """Tests for Order Tracker. Run with: python3 -m unittest discover tests"""
 
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -148,6 +149,12 @@ class TestDateParsing(unittest.TestCase):
     def test_unreadable_date_is_kept_rather_than_dropped(self):
         self.assertEqual(orders.normalise_date("whenever"), "whenever")
 
+    def test_an_absent_date_stays_absent(self):
+        """It must never be stored as the text "None"."""
+        for empty in (None, "", "   "):
+            with self.subTest(empty=empty):
+                self.assertIsNone(orders.normalise_date(empty))
+
     def test_stored_timestamps_parse_back_to_their_date(self):
         """Alert logic reads updated_at, which carries a clock time."""
         import datetime
@@ -178,6 +185,28 @@ class TestOrders(unittest.TestCase):
         self.assertEqual(order["value"], 1250.5)
         self.assertEqual(len(order["history"]), 1)
         self.assertEqual(len(orders.list_companies()), 1)
+
+    def test_an_order_with_no_dates_stores_them_as_absent(self):
+        """A blank promise date must not show up in the blotter as "None"."""
+        order_id = orders.create_order({"order_no": "SO-NODATE", "company": "A"})
+        order = orders.get_order(order_id)
+        self.assertIsNone(order["promise_date"])
+        self.assertIsNone(order["order_date"])
+        self.assertIsNone(order["ship_date"])
+        self.assertIsNone(order["days_to_promise"])
+
+    def test_dates_stored_as_the_text_none_are_repaired(self):
+        """Data written by an earlier version must be cleaned up on startup."""
+        order_id = orders.create_order({"order_no": "SO-OLD", "company": "A"})
+        conn = db.connect()
+        with conn:
+            conn.execute("UPDATE orders SET promise_date = 'None', "
+                         "order_date = 'None' WHERE id = ?", (order_id,))
+
+        db.init_db()
+        order = orders.get_order(order_id)
+        self.assertIsNone(order["promise_date"])
+        self.assertIsNone(order["order_date"])
 
     def test_duplicate_order_number_is_refused(self):
         orders.create_order({"order_no": "SO-1", "company": "A"})
@@ -623,6 +652,80 @@ class TestStorageFailures(unittest.TestCase):
         finally:
             config.DB_PATH = original
             db._local.__dict__.clear()
+
+
+# ----------------------------------------------------------------- settings
+
+class TestSettings(unittest.TestCase):
+    """Where the data lives is remembered outside the app folder."""
+
+    def setUp(self):
+        from ordertracker import settings
+        self.settings = settings
+        self.home = Path(tempfile.mkdtemp(prefix="ot-settings-"))
+        self._env = {k: os.environ.get(k) for k in
+                     ("XDG_CONFIG_HOME", "LOCALAPPDATA", "HOME")}
+        os.environ["XDG_CONFIG_HOME"] = str(self.home)
+        os.environ["LOCALAPPDATA"] = str(self.home)
+        os.environ["HOME"] = str(self.home)
+
+    def tearDown(self):
+        for key, value in self._env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        shutil.rmtree(self.home, ignore_errors=True)
+
+    def test_defaults_apply_when_nothing_is_saved(self):
+        values = self.settings.load()
+        self.assertEqual(values["workspace"], "")
+        self.assertTrue(values["show_welcome"])
+
+    def test_saved_values_come_back(self):
+        self.settings.save(workspace=str(self.home / "drive"), welcome_name="Rachel")
+        values = self.settings.load()
+        self.assertEqual(values["welcome_name"], "Rachel")
+        self.assertEqual(self.settings.workspace(), (self.home / "drive").resolve())
+
+    def test_a_damaged_settings_file_falls_back_to_defaults(self):
+        path = self.settings.settings_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{not json at all", encoding="utf-8")
+        self.assertEqual(self.settings.load()["workspace"], "")
+
+    def test_unknown_keys_are_ignored(self):
+        path = self.settings.settings_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"workspace": "/x", "nonsense": 1}), encoding="utf-8")
+        self.assertNotIn("nonsense", self.settings.load())
+
+
+class TestShortcut(unittest.TestCase):
+
+    @unittest.skipIf(sys.platform == "win32", "the .lnk path needs PowerShell")
+    def test_a_launcher_is_written_to_the_desktop(self):
+        from ordertracker import shortcut
+
+        desktop = Path(tempfile.mkdtemp(prefix="ot-desktop-"))
+        previous_desktop = os.environ.get("XDG_DESKTOP_DIR")
+        previous_home = os.environ.get("HOME")
+        os.environ["XDG_DESKTOP_DIR"] = str(desktop)
+        os.environ["HOME"] = str(desktop.parent)
+        try:
+            link = shortcut.create()
+            self.assertTrue(link.exists())
+            body = link.read_text()
+            self.assertIn("run.py", body)
+            self.assertIn(str(config.BASE_DIR), body)
+        finally:
+            for key, value in (("XDG_DESKTOP_DIR", previous_desktop),
+                               ("HOME", previous_home)):
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            shutil.rmtree(desktop, ignore_errors=True)
 
 
 # ------------------------------------------------------------------ samples

@@ -59,6 +59,12 @@ def api_bootstrap(handler, match):
     }
 
 
+@route("GET", r"/api/ping")
+def api_ping(handler, match):
+    """Used to spot an Order Tracker that is already running on this port."""
+    return {"app": "order-tracker", "data": str(config.DATA_DIR)}
+
+
 @route("GET", r"/api/dashboard")
 def api_dashboard(handler, match):
     return orders.dashboard()
@@ -440,18 +446,46 @@ class Handler(BaseHTTPRequestHandler):
             pass  # the browser navigated away mid-response
 
     def serve_static(self, path):
-        rel = "index.html" if path in ("/", "") else path.lstrip("/")
-        target = (config.WEB_DIR / rel).resolve()
+        # The icon and its preview live outside web/, in assets/.
+        if path.startswith("/assets/"):
+            root = config.ASSETS_DIR
+            rel = path[len("/assets/"):]
+        else:
+            root = config.WEB_DIR
+            rel = "index.html" if path in ("/", "") else path.lstrip("/")
+
+        target = (root / rel).resolve()
         try:
-            target.relative_to(config.WEB_DIR.resolve())
+            target.relative_to(root.resolve())
         except ValueError:
             self.send_error(HTTPStatus.FORBIDDEN, "Outside the web directory")
             return
         if not target.is_file():
             self.send_error(HTTPStatus.NOT_FOUND, "Not found")
             return
+
+        if target.name == "index.html":
+            self.send_bytes(self.page_with_welcome(target),
+                            "text/html; charset=utf-8")
+            return
+
         mime = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
         self.send_bytes(target.read_bytes(), mime)
+
+    def page_with_welcome(self, target) -> bytes:
+        """Inline the welcome settings so the splash never flashes wrongly."""
+        from . import settings
+
+        saved = settings.load()
+        payload = json.dumps({
+            "name": saved.get("welcome_name") or "",
+            "show": bool(saved.get("show_welcome", True)),
+        })
+        html = target.read_text("utf-8")
+        return html.replace(
+            "</head>",
+            f"<script>window.__WELCOME__ = {payload};</script>\n</head>", 1
+        ).encode("utf-8")
 
 
 def serve(host=None, port=None):

@@ -65,9 +65,18 @@ def _parse_date(value):
 
 
 def normalise_date(value) -> str | None:
-    """Accept the date formats people actually paste in; store one of them."""
-    parsed = _parse_date(value)
-    return parsed.isoformat() if parsed else (str(value).strip() or None)
+    """Accept the date formats people actually paste in; store one of them.
+
+    A date we cannot read is kept as typed rather than thrown away, but an
+    absent one stays absent — it must never become the text "None".
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    parsed = _parse_date(text)
+    return parsed.isoformat() if parsed else text
 
 
 # --- Alerts ----------------------------------------------------------------

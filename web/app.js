@@ -88,6 +88,49 @@ const S = {
   importPreview: null,
 };
 
+/* ----------------------------------------------------------------- splash */
+
+const WELCOME = window.__WELCOME__ || { name: '', show: true };
+const SPLASH_MIN_MS = 1400;          // long enough to read, short enough to forgive
+const splashShownAt = Date.now();
+let splashFinished = false;
+
+function dismissSplash(immediately = false) {
+  if (splashFinished) return;
+  const node = $('#splash');
+  if (!node) { splashFinished = true; return; }
+
+  const waited = Date.now() - splashShownAt;
+  const remaining = immediately ? 0 : Math.max(0, SPLASH_MIN_MS - waited);
+  setTimeout(() => {
+    splashFinished = true;
+    node.classList.add('gone');
+    setTimeout(() => node.remove(), 600);
+  }, remaining);
+}
+
+function splashError(message) {
+  const hint = $('#splashhint');
+  const bar = $('#splashbar');
+  if (hint) { hint.textContent = message; hint.style.color = 'var(--red)'; }
+  if (bar) bar.remove();
+}
+
+function setUpSplash() {
+  if (!WELCOME.show) {
+    splashFinished = true;
+    const node = $('#splash');
+    if (node) node.remove();
+    return;
+  }
+  const name = $('#splashname');
+  if (name) name.textContent = WELCOME.name || '';
+  const node = $('#splash');
+  if (node) node.addEventListener('click', () => dismissSplash(true));
+}
+
+setUpSplash();
+
 /* ------------------------------------------------------------------- boot */
 
 async function boot() {
@@ -96,10 +139,12 @@ async function boot() {
   } catch (err) {
     status('could not reach the server — is run.py still going?');
     toast('Cannot reach the server: ' + err.message, 'err');
+    splashError('Cannot reach the server. Is the black window still open?');
     return;
   }
   renderTopStats();
   applyHash();
+  dismissSplash();
   tickClock();
   setInterval(tickClock, 1000);
   setInterval(refreshQuietly, 60000);
@@ -1159,6 +1204,8 @@ function isTyping(target) {
 }
 
 document.addEventListener('keydown', event => {
+  if (!splashFinished) { dismissSplash(true); return; }
+
   if (event.key === 'Escape') {
     if (!$('#modal').classList.contains('hidden')) { closeModal(); return; }
     if (isTyping(event.target)) { event.target.blur(); return; }

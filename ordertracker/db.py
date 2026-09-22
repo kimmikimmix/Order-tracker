@@ -149,7 +149,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
 
 
 def init_db() -> None:
-    """Create the schema if it is not there yet."""
+    """Create the schema if it is not there yet, and tidy known bad values."""
     conn = connect()
     with conn:
         conn.executescript(SCHEMA)
@@ -157,6 +157,24 @@ def init_db() -> None:
             "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
             (str(SCHEMA_VERSION),),
         )
+        repair_dates(conn)
+
+
+def repair_dates(conn: sqlite3.Connection) -> int:
+    """Clear date columns holding the text "None".
+
+    Early versions turned a missing date into the string "None", which then
+    showed up in the blotter and stopped the overdue check working. Absent
+    dates belong in the database as NULL.
+    """
+    fixed = 0
+    for column in ("order_date", "promise_date", "ship_date"):
+        cursor = conn.execute(
+            f"UPDATE orders SET {column} = NULL "
+            f"WHERE {column} IN ('None', 'none', '')"
+        )
+        fixed += cursor.rowcount or 0
+    return fixed
 
 
 # --- Full-text maintenance -------------------------------------------------

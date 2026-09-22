@@ -5,9 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Order Tracker</title>
 <link rel="stylesheet" href="/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%230a0a0b'/><text y='24' x='5' font-size='22' fill='%23ffa028' font-family='monospace'>O</text></svg>">
+<link rel="icon" href="/assets/ordertracker.png">
 </head>
 <body>
+
+<div id="splash">
+  <div class="splashinner">
+    <img class="splashmark" src="/assets/ordertracker.png" alt="">
+    <div class="splashhello">WELCOME</div>
+    <div class="splashname" id="splashname"></div>
+    <div class="splashbrand">ORDER<span>TRACKER</span></div>
+    <div class="splashbar" id="splashbar"><span></span></div>
+    <div class="splashhint" id="splashhint">opening your order book…</div>
+  </div>
+</div>
+<script>
+  /* Hide the splash before it paints when it has been turned off. */
+  if (window.__WELCOME__ && window.__WELCOME__.show === false) {
+    document.documentElement.classList.add('no-splash');
+  }
+</script>
 
 <header id="topbar">
   <div class="brand">ORDER<span>TRACKER</span></div>

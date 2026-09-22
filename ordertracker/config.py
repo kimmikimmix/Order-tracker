@@ -7,13 +7,23 @@ should be renamed to match how your business actually talks about orders.
 import os
 from pathlib import Path
 
+from . import settings
+
 # --- Paths -----------------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = Path(os.environ.get("ORDER_TRACKER_DATA", BASE_DIR / "data"))
+
+# Where your orders and documents are kept. Pick this once with `setup.py`
+# — it is remembered outside the app folder, so re-downloading or updating
+# the app never moves your data.
+WORKSPACE = settings.workspace() or BASE_DIR
+
+DATA_DIR = Path(os.environ.get("ORDER_TRACKER_DATA", WORKSPACE / "data"))
+DEMO_DIR = WORKSPACE / "demo-data"
 DOCS_DIR = DATA_DIR / "documents"
 DB_PATH = DATA_DIR / "orders.db"
 WEB_DIR = BASE_DIR / "web"
+ASSETS_DIR = BASE_DIR / "assets"
 
 HOST = os.environ.get("ORDER_TRACKER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ORDER_TRACKER_PORT", "8787"))
