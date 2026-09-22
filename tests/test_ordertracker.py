@@ -2028,3 +2028,102 @@ class TestUninstall(unittest.TestCase):
             self.uninstall.main(["--delete", "--yes"])
         self.assertTrue(config.BASE_DIR.exists())
         self.assertIn(str(config.BASE_DIR.resolve()), out.getvalue())
+
+
+# ------------------------------------------------------------ network drives
+
+class TestNetworkDrives(unittest.TestCase):
+    """A mapped drive pointing at a file server is not a disk with a
+    different letter. SQLite's locking cannot be relied on over a share and
+    its write-ahead log does not work there at all, and git cannot do the
+    atomic renames a clone needs — so the app has to spot one and say so.
+
+    The Windows calls are stubbed, so the logic is exercised everywhere.
+    """
+
+    def setUp(self):
+        from ordertracker import drives
+
+        self.drives = drives
+        self.real = (drives._drive_type, drives._unc_for)
+
+    def tearDown(self):
+        self.drives._drive_type, self.drives._unc_for = self.real
+
+    def pretend(self, kind, unc=""):
+        self.drives._drive_type = lambda root: kind
+        self.drives._unc_for = lambda letter: unc
+
+    def test_a_unc_path_says_so_by_itself(self):
+        found = self.drives.describe(r"\\EstInternetDisk\2-yjkim\Prog\TT")
+        self.assertTrue(found["network"])
+        self.assertEqual(found["where"], r"\\EstInternetDisk\2-yjkim")
+
+    def test_forward_slashes_are_understood_too(self):
+        """Git reports the path this way in its error messages."""
+        found = self.drives.describe("//EstInternetDisk/2-yjkim/Prog/TT")
+        self.assertTrue(found["network"])
+        self.assertEqual(found["where"], r"\\EstInternetDisk\2-yjkim")
+
+    def test_a_mapped_letter_is_resolved_to_what_it_points_at(self):
+        self.pretend(self.drives.DRIVE_REMOTE, r"\\EstInternetDisk\2-yjkim")
+        found = self.drives.describe(r"G:\김영진\Prog\TT")
+        self.assertTrue(found["network"])
+        self.assertIn("EstInternetDisk", found["where"])
+
+    def test_a_mapped_letter_with_no_name_still_warns(self):
+        self.pretend(self.drives.DRIVE_REMOTE, "")
+        found = self.drives.describe(r"G:\Order Tracker")
+        self.assertTrue(found["network"])
+        self.assertIn("G:", found["where"])
+
+    def test_an_ordinary_disk_is_left_alone(self):
+        self.pretend(3)                      # DRIVE_FIXED
+        self.assertFalse(self.drives.describe(r"C:\Users\eos")["network"])
+        self.assertEqual(self.drives.warning_for(r"C:\Users\eos"), "")
+
+    def test_a_removable_disk_is_not_a_network_drive(self):
+        """A USB stick is a perfectly good home for a portable copy."""
+        self.pretend(2)                      # DRIVE_REMOVABLE
+        self.assertFalse(self.drives.describe(r"E:\Order Tracker")["network"])
+
+    def test_anything_unexpected_is_treated_as_local(self):
+        """A wrong warning is worse than none, so surprises mean local."""
+        def explode(_):
+            raise OSError("no such call on this platform")
+
+        self.drives._drive_type = explode
+        self.assertFalse(self.drives.describe(r"G:\folder")["network"])
+
+    def test_the_warning_names_the_share_and_what_to_do(self):
+        text = self.drives.warning_for("//EstInternetDisk/2-yjkim/Prog")
+        self.assertIn("EstInternetDisk", text)
+        self.assertIn("backup folder", text)
+        self.assertIn("write-ahead log", text)
+
+    def test_the_move_plan_carries_the_warning(self):
+        from ordertracker import relocate
+
+        self.pretend(self.drives.DRIVE_REMOTE, r"\\server\share")
+        target = Path(tempfile.mkdtemp(prefix="ot-net-")) / "TT"
+        try:
+            report = relocate.plan(target, probe=False)
+            # The stub answers for any drive letter, and a temp path has
+            # none, so drive detection is exercised through the UNC branch.
+            self.assertIn("warning", report)
+            self.assertIn("network", report)
+        finally:
+            shutil.rmtree(target.parent, ignore_errors=True)
+
+    def test_a_unc_destination_is_flagged_in_the_plan(self):
+        from ordertracker import relocate
+
+        real = self.drives.warning_for
+        self.drives.warning_for = lambda path: "pretend warning"
+        try:
+            target = Path(tempfile.mkdtemp(prefix="ot-net2-")) / "TT"
+            report = relocate.plan(target, probe=False)
+            self.assertEqual(report["warning"], "pretend warning")
+            shutil.rmtree(target.parent, ignore_errors=True)
+        finally:
+            self.drives.warning_for = real

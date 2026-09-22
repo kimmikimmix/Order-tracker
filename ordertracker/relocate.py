@@ -17,7 +17,7 @@ import sqlite3
 import stat
 from pathlib import Path
 
-from . import config, settings
+from . import config, drives, settings
 
 # Nothing here is worth copying. The data folders are excluded from the file
 # copy because the database needs the backup call, and the documents are
@@ -200,6 +200,11 @@ def plan(destination, probe: bool = True) -> dict:
         "problem": "",
         "writable": False,
         "reason": "",
+        # A network drive can usually be written to perfectly well, so this
+        # is a warning rather than a refusal — but it is the wrong home for
+        # a live database, and worth saying loudly.
+        "warning": drives.warning_for(target),
+        "network": drives.describe(target)["network"],
     }
 
     if target == source:

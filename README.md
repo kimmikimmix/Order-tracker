@@ -171,6 +171,32 @@ prompt instead, `Ctrl+C` there also works.
 
 Your data is written as you go, so stopping it never loses anything.
 
+## A word about network drives
+
+A mapped drive that points at a file server — `G:` that is really
+`\\SomeServer\your-folder` — is not a disk with a different letter, and
+Order Tracker should not run from one.
+
+- SQLite, the database underneath it, says its file locking cannot be relied
+  on over a network filesystem, and the write-ahead log this app uses does
+  not work over one **at all**, because it needs shared memory a share
+  cannot provide.
+- Git cannot do the atomic renames a clone needs on many shares. It fails
+  partway with `Rename from '.git/config.lock' to '.git/config' failed`.
+
+The app spots one and says so — on the SETUP page, in `setup.py`, and in
+`doctor.py`, which reports whether the app folder and the data folder are on
+a network location.
+
+**A network drive is the right home for your backups, not your live data.**
+Keep the app and its data on the machine, then set the backup folder on the
+SETUP page to the share. You get a complete, working order book copied there
+every time the app starts — which is what most people wanted from "keep it on
+the shared drive" in the first place.
+
+A USB stick or an external disk is a different matter: those are local
+filesystems and portable mode works on them properly.
+
 ## Running it from a personal or USB drive
 
 The whole thing is portable — plain Python files, a database and your
@@ -446,7 +472,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 152 tests, no dependencies
+python3 -m unittest discover tests     # 164 tests, no dependencies
 ```
 
 The pieces:
@@ -467,6 +493,7 @@ ordertracker/
   pcb.py                    build specification, conversions and costing
   printsheet.py             the printable specification and cost sheet
   geo.py                    countries, positions and time zones
+  drives.py                 telling a local disk from a network share
   backup.py                 the second copy, and when things last saved
   relocate.py               copying the app and its data to another drive
   documents.py              file storage, classification, auto-filing

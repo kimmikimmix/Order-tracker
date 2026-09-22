@@ -57,6 +57,14 @@ def main():
 
         print(f"\n{'Demo data' if demo else 'Real data'}  ({data_dir})")
 
+        from ordertracker import drives
+        network = drives.warning_for(data_dir)
+        if network:
+            print()
+            for text in network.splitlines():
+                print(f"  ! {text}" if text else "  !")
+            print()
+
         ok = check("create the folder",
                    lambda: docs_dir.mkdir(parents=True, exist_ok=True))
         if ok:
@@ -79,6 +87,17 @@ def main():
 
             if not check("open the database", open_database):
                 explain(data_dir)
+
+    print("\nWhere the app itself is")
+    from ordertracker import drives
+    here = drives.describe(config.BASE_DIR)
+    line("app folder", config.BASE_DIR)
+    line("on a network drive", "YES — " + here["where"] if here["network"] else "no")
+    if here["network"]:
+        print("\n  Git cannot reliably clone or pull onto a network share: it")
+        print("  needs atomic renames the share may refuse, which shows up as")
+        print("  a rename error on .git/config.lock partway through a clone.")
+        print("  Keep the app on this machine and back up to the share.")
 
     print("\nFallback location")
     fallback = Path(tempfile.gettempdir()) / "order-tracker-data"

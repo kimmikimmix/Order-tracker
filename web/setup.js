@@ -92,7 +92,8 @@ async function renderSetup() {
         </tbody></table>
 
         <div class="formgrid" style="margin-top:10px">
-          <div class="lbl">BACKUP FOLDER</div>
+          <div class="lbl">BACKUP FOLDER <i class="fhint">a network drive
+            is a good home for this</i></div>
           <div class="wide">${box('backup_dir', p.backup_dir,
             'placeholder="D:\\\\Backups  or  a network folder"')}</div>
           <div class="lbl">KEEP</div>
@@ -241,11 +242,26 @@ async function checkMove(thenCopy) {
     ([k, v]) => `<tr><td class="ck">${k}</td><td class="path">${v}</td></tr>`
   ).join('')}</tbody></table>`;
 
+  const warning = report.warning
+    ? `<div class="movewarn"><b>This is a network drive</b>
+         <pre>${esc(report.warning)}</pre></div>`
+    : '';
+
   if (!thenCopy) {
-    moveOut(table + `<div class="note">That folder can be written to.
-      Nothing has been copied — press COPY EVERYTHING THERE when you are
+    moveOut(table + warning + `<div class="note">That folder can be written
+      to. Nothing has been copied — press COPY EVERYTHING THERE when you are
       ready.${report.not_empty ? ' It is not empty; files with the same '
         + 'names will be overwritten.' : ''}</div>`);
+    return;
+  }
+
+  if (report.warning && !confirm(
+      'That folder is on a network drive.\n\n'
+      + 'The database underneath Order Tracker is not safe to run from one '
+      + '— its file locking cannot be relied on over a share. The right way '
+      + 'to get your orders onto it is the backup folder above.\n\n'
+      + 'Copy it there anyway?')) {
+    moveOut(table + warning);
     return;
   }
 
@@ -253,7 +269,7 @@ async function checkMove(thenCopy) {
     `Copy Order Tracker to:\n\n${report.destination}\n\n`
     + `Your orders (${report.stored || 'none yet'}) come too.\n`
     + 'Nothing in the current folder is deleted.');
-  if (!sure) { moveOut(table); return; }
+  if (!sure) { moveOut(table + warning); return; }
 
   moveOut(table + '<div class="note">copying… this can take a minute on a '
     + 'slow drive. Leave this page open.</div>');

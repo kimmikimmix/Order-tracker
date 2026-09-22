@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ordertracker import config, settings  # noqa: E402
+from ordertracker import config, drives, settings  # noqa: E402
 
 
 def ask(question: str, default: str = "") -> str:
@@ -166,6 +166,16 @@ def main(argv=None):
         print("  Nothing has been changed. Try another folder.\n")
         return 1
     print(f"\n  [ ok ] {workspace} — {reason}")
+
+    network = drives.warning_for(workspace)
+    if network:
+        print()
+        for line in network.splitlines():
+            print(f"  ! {line}" if line else "  !")
+        if interactive and not ask_yes("\n  Use it anyway?", default=False):
+            print("\n  Nothing has been changed. Try a folder on this "
+                  "machine.\n")
+            return 1
 
     new_data_dir = workspace / "data"
     new_demo_dir = workspace / "demo-data"
