@@ -84,9 +84,20 @@ Your data is written as you go, so stopping it never loses anything.
 
 ## Running it from a personal or USB drive
 
-The whole thing is portable — it is plain Python files, a database and your
-documents, with nothing installed into Windows. Copy the folder to your drive
-and set it up as portable:
+The whole thing is portable — plain Python files, a database and your
+documents, with nothing installed into Windows. One command moves it:
+
+```
+py move_to.py "G:\my folder\Order Tracker"
+```
+
+That copies the app and everything you have stored to the new folder,
+switches the copy to portable mode, and repoints the desktop shortcut at it.
+Nothing is deleted — the old folder stays until you check the copy works and
+remove it yourself.
+
+If you would rather do it by hand, copy the folder across and then run this
+inside the copy:
 
 ```
 py setup.py --portable
@@ -232,7 +243,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 73 tests, no dependencies
+python3 -m unittest discover tests     # 75 tests, no dependencies
 ```
 
 The pieces:
@@ -240,6 +251,7 @@ The pieces:
 ```
 run.py                      entry point
 setup.py                    first-run wizard: storage folder, shortcut, name
+move_to.py                  copy the app and its data to another drive
 doctor.py                   startup check when something will not run
 ordertracker/
   config.py                 pipeline, thresholds, paths — edit this first

@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -746,6 +747,45 @@ class TestQuitting(unittest.TestCase):
 
         with self.assertRaises((urllib.error.URLError, OSError)):
             urllib.request.urlopen(base + "/api/ping", timeout=3)
+
+
+class TestMoveToAnotherDrive(unittest.TestCase):
+    """Copying the app to another drive must bring the data and stay portable."""
+
+    def setUp(self):
+        fresh_db()
+        self.target = Path(tempfile.mkdtemp(prefix="ot-drive-")) / "Order Tracker"
+
+    def tearDown(self):
+        shutil.rmtree(self.target.parent, ignore_errors=True)
+
+    def test_the_copy_is_complete_portable_and_keeps_the_data(self):
+        import move_to
+
+        orders.create_order({"order_no": "SO-1000", "company": "대한정밀 주식회사"})
+
+        code = move_to.main([str(self.target), "--no-git", "--no-shortcut"])
+        self.assertEqual(code, 0)
+
+        for needed in ("run.py", "setup.py", "ordertracker", "web", "assets"):
+            self.assertTrue((self.target / needed).exists(), needed)
+
+        # The marker is what keeps it working on a different drive letter.
+        self.assertTrue((self.target / "portable.txt").exists())
+
+        moved_db = self.target / "data" / "orders.db"
+        self.assertTrue(moved_db.exists(), "the orders did not come across")
+        conn = sqlite3.connect(f"file:{moved_db}?mode=ro", uri=True)
+        names = [row[0] for row in conn.execute("SELECT order_no FROM orders")]
+        conn.close()
+        self.assertIn("SO-1000", names)
+
+    def test_copying_a_folder_into_itself_is_refused(self):
+        import move_to
+
+        self.assertEqual(move_to.main([str(config.BASE_DIR / "inner"),
+                                       "--no-shortcut"]), 1)
+        self.assertEqual(move_to.main([str(config.BASE_DIR), "--no-shortcut"]), 1)
 
 
 # ----------------------------------------------------------------- settings
