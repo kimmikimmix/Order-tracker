@@ -174,7 +174,22 @@ Your data is written as you go, so stopping it never loses anything.
 ## Running it from a personal or USB drive
 
 The whole thing is portable — plain Python files, a database and your
-documents, with nothing installed into Windows. One command moves it:
+documents, with nothing installed into Windows.
+
+**The easiest way is from inside the app.** Open **SETUP** (`6`), find *Move
+it to another drive*, type the folder and press **CHECK THE FOLDER**. It
+reports what would be copied and where, without writing anything. Then press
+**COPY EVERYTHING THERE**.
+
+When it finishes, click **QUIT** and open Order Tracker from your desktop
+icon — it points at the new folder now. No command prompt, and nothing to get
+into the right directory.
+
+If a folder will not work, the reason appears on the page rather than as an
+error in a black window, which is usually enough to tell a drive permission
+apart from anything else.
+
+The same thing from the command line, for anyone who prefers it:
 
 ```
 py move_to.py "G:\my folder\Order Tracker"
@@ -189,9 +204,11 @@ remove it yourself.
 SETUP page (they live in the database), your name on the welcome screen, and
 the git history, so `git pull` still updates the app from its new home.
 
-**Close Order Tracker first.** It refuses to run while the app is open,
-because copying a database that is being written to is the one way this can
-leave you worse off than you started. Click QUIT, then run it.
+**Close Order Tracker before using the command-line version.** It refuses to
+run while the app is open, because copying a database that is being written to
+is the one way this can leave you worse off than you started. The button
+inside the app has no such problem: the app reading its own database through
+SQLite's backup call is safe, and it is only writing to the new folder.
 
 To test a destination before committing to it — useful if a copy has already
 gone wrong once:
@@ -207,8 +224,9 @@ history, which is most of the files and none of the app.
 
 ### Doing it by hand
 
-If the drive refuses Python but File Explorer copies to it happily — which is
-common on company and network drives — ask for the plan instead:
+If the drive refuses Python altogether but File Explorer copies to it happily
+— which happens on some company and network drives — ask for the plan
+instead:
 
 ```
 py move_to.py "G:\my folder\Order Tracker" --manual
@@ -395,7 +413,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 142 tests, no dependencies
+python3 -m unittest discover tests     # 146 tests, no dependencies
 ```
 
 The pieces:
@@ -416,6 +434,7 @@ ordertracker/
   printsheet.py             the printable specification and cost sheet
   geo.py                    countries, positions and time zones
   backup.py                 the second copy, and when things last saved
+  relocate.py               copying the app and its data to another drive
   documents.py              file storage, classification, auto-filing
   importer.py               CSV / Excel import and column matching
   xlsx.py                   a small read-only .xlsx reader

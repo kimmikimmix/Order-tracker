@@ -16,7 +16,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (backup, config, db, documents, geo, importer, multipart,
-               orders, pcb, prefs, printsheet, settings)
+               orders, pcb, prefs, printsheet, relocate, settings)
 
 MAX_BODY_BYTES = config.MAX_UPLOAD_BYTES + (8 * 1024 * 1024)
 
@@ -425,6 +425,42 @@ def api_backup(handler, match):
         return backup.run(folder)
     except backup.BackupError as exc:
         raise ApiError(str(exc)) from exc
+
+
+# --- API: moving to another drive ------------------------------------------
+
+@route("POST", r"/api/move/check")
+def api_move_check(handler, match):
+    """What a copy to this folder would involve. Writes nothing."""
+    folder = (handler.json_body() or {}).get("folder", "")
+    if not str(folder).strip():
+        raise ApiError("Type the folder you want it copied to first.")
+    try:
+        return relocate.plan(folder)
+    except OSError as exc:
+        raise ApiError(f"That folder could not be checked: {exc}") from exc
+
+
+@route("POST", r"/api/move")
+def api_move(handler, match):
+    """Copy the app and its data somewhere else, from inside the app.
+
+    Doing it from here saves getting a command prompt into the right folder,
+    which is the step that goes wrong most often. The app copying itself is
+    safe: it reads its own database through SQLite's backup call and writes
+    only to the new folder.
+    """
+    data = handler.json_body()
+    folder = str(data.get("folder") or "").strip()
+    if not folder:
+        raise ApiError("Type the folder you want it copied to first.")
+    try:
+        return relocate.run(folder, keep_git=bool(data.get("keep_git", True)),
+                            shortcut=bool(data.get("shortcut", True)))
+    except relocate.MoveError as exc:
+        raise ApiError(str(exc)) from exc
+    except OSError as exc:
+        raise ApiError(f"The copy failed: {exc}") from exc
 
 
 # --- The printable sheet ---------------------------------------------------

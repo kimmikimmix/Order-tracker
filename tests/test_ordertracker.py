@@ -900,8 +900,10 @@ class TestMoveToAnotherDrive(unittest.TestCase):
         someone worse off than they started."""
         import move_to
 
-        real = move_to.running_copy
-        move_to.running_copy = lambda: "/somewhere/data"
+        from ordertracker import relocate
+
+        real = relocate.running_copy
+        relocate.running_copy = lambda: "/somewhere/data"
         try:
             self.assertEqual(
                 move_to.main([str(self.target), "--no-git", "--no-shortcut"]), 1)
@@ -911,7 +913,7 @@ class TestMoveToAnotherDrive(unittest.TestCase):
                 move_to.main([str(self.target), "--no-git", "--no-shortcut",
                               "--force"]), 0)
         finally:
-            move_to.running_copy = real
+            relocate.running_copy = real
 
     def test_the_manual_plan_copies_nothing_and_names_the_data_folder(self):
         """When the drive refuses Python, the plan has to be followable in
@@ -938,7 +940,7 @@ class TestMoveToAnotherDrive(unittest.TestCase):
 
     def test_finish_completes_a_copy_made_by_hand(self):
         import move_to
-        from ordertracker import settings
+        from ordertracker import relocate, settings
 
         home = Path(tempfile.mkdtemp(prefix="ot-home-"))
         previous = {k: os.environ.get(k) for k in
@@ -958,7 +960,7 @@ class TestMoveToAnotherDrive(unittest.TestCase):
 
             config.BASE_DIR = self.target
             settings.PORTABLE_MARKER = self.target / "portable.txt"
-            self.assertEqual(move_to.finish_here(make_shortcut=False), 0)
+            self.assertTrue(relocate.finish_here(shortcut=False)["ok"])
 
             self.assertTrue((self.target / "portable.txt").exists())
             carried = settings.read_file(self.target / "settings.json")
@@ -978,14 +980,16 @@ class TestMoveToAnotherDrive(unittest.TestCase):
             shutil.rmtree(home, ignore_errors=True)
 
     def test_finish_in_the_wrong_folder_says_so(self):
-        import move_to
+        from ordertracker import relocate
 
         empty = self.holder / "not the app"
         empty.mkdir()
         real_base = config.BASE_DIR
         config.BASE_DIR = empty
         try:
-            self.assertEqual(move_to.finish_here(make_shortcut=False), 1)
+            with self.assertRaises(relocate.MoveError) as caught:
+                relocate.finish_here(shortcut=False)
+            self.assertIn("run.py", str(caught.exception))
             self.assertFalse((empty / "portable.txt").exists())
         finally:
             config.BASE_DIR = real_base
@@ -1800,6 +1804,59 @@ class TestSpecAndSettingsOverHttp(unittest.TestCase):
             self.fail("expected a 404")
         except urllib.error.HTTPError as exc:
             self.assertEqual(exc.code, 404)
+
+    def test_the_move_can_be_checked_from_the_app(self):
+        """The whole point of the button: no command prompt, no wrong
+        folder. A check must report without writing the app anywhere."""
+        target = Path(tempfile.mkdtemp(prefix="ot-move-http-")) / "Order Tracker"
+        code, report = self.post("/api/move/check", {"folder": str(target)})
+        try:
+            self.assertEqual(code, 200)
+            self.assertEqual(report["problem"], "")
+            self.assertTrue(report["writable"])
+            self.assertIn("orders", report["stored"])
+            self.assertEqual(report["data_destination"], str(target / "data"))
+            self.assertFalse((target / "run.py").exists())
+        finally:
+            shutil.rmtree(target.parent, ignore_errors=True)
+
+    def test_a_folder_that_will_not_work_is_explained_not_thrown(self):
+        blocker = Path(tempfile.mkdtemp(prefix="ot-move-bad-")) / "in the way"
+        blocker.write_text("a file, not a folder", encoding="utf-8")
+        try:
+            code, report = self.post("/api/move/check",
+                                     {"folder": str(blocker / "inside")})
+            self.assertEqual(code, 200)
+            self.assertTrue(report["problem"])
+        finally:
+            shutil.rmtree(blocker.parent, ignore_errors=True)
+
+    def test_an_empty_folder_is_refused_with_something_readable(self):
+        code, body = self.post("/api/move/check", {"folder": "   "})
+        self.assertEqual(code, 400)
+        self.assertIn("folder", body["error"])
+
+    def test_the_app_can_copy_itself_while_it_is_running(self):
+        """The app moving itself is safe — it reads its own database through
+        SQLite's backup call and writes only to the new folder."""
+        holder = Path(tempfile.mkdtemp(prefix="ot-move-live-"))
+        target = holder / "Order Tracker"
+        try:
+            code, result = self.post("/api/move", {
+                "folder": str(target), "keep_git": False, "shortcut": False})
+            self.assertEqual(code, 200, result)
+            self.assertTrue(result["ok"])
+            self.assertTrue((target / "run.py").exists())
+            self.assertTrue((target / "portable.txt").exists())
+            self.assertIn("orders", result["orders"])
+
+            moved = sqlite3.connect(
+                f"file:{target / 'data' / 'orders.db'}?mode=ro", uri=True)
+            names = [r[0] for r in moved.execute("SELECT order_no FROM orders")]
+            moved.close()
+            self.assertIn("SO-HTTP", names)
+        finally:
+            shutil.rmtree(holder, ignore_errors=True)
 
     def test_another_site_cannot_change_the_settings(self):
         request = urllib.request.Request(

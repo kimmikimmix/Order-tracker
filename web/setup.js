@@ -60,8 +60,24 @@ async function renderSetup() {
                     ? '<span class="chip a-ONHOLD">ON</span> data stays in the app folder'
                     : 'off — the data folder is remembered separately'}</td></tr>
         </tbody></table>
-        <div class="note">To move all of this to another drive, close the app
-          and run <code>py move_to.py "D:\\Your Folder"</code>.</div>
+      </section>
+
+      <section class="card">
+        <h2 class="sect">Move it to another drive</h2>
+        <div class="note" style="margin-bottom:8px">Copies the app and
+          everything you have stored to a folder you pick, sets the copy to
+          keep its data in its own folder, and points your desktop icon at
+          it. Nothing here is deleted.</div>
+        <div class="formgrid">
+          <div class="lbl">NEW FOLDER</div>
+          <div class="wide"><input id="set-move_dir"
+            placeholder="G:\\my folder\\Order Tracker"></div>
+        </div>
+        <div class="filterbar" style="padding:8px 0">
+          <button class="btn" id="set-move-check">CHECK THE FOLDER</button>
+          <button class="btn primary" id="set-move-go">COPY EVERYTHING THERE</button>
+        </div>
+        <div id="set-move-out"></div>
       </section>
 
       <section class="card">
@@ -187,6 +203,80 @@ async function renderSetup() {
     renderSetup();
   };
   $('#set-backup-now').onclick = backupNow;
+  $('#set-move-check').onclick = () => checkMove(false);
+  $('#set-move-go').onclick = () => checkMove(true);
+}
+
+/* ---- moving to another drive ---- */
+
+function moveOut(html) { $('#set-move-out').innerHTML = html; }
+
+async function checkMove(thenCopy) {
+  const folder = $('#set-move_dir').value.trim();
+  if (!folder) {
+    toast('Type the folder you want it copied to first.', 'err');
+    $('#set-move_dir').focus();
+    return;
+  }
+
+  moveOut('<div class="note">checking…</div>');
+  let report;
+  try {
+    report = await postJSON('/api/move/check', { folder });
+  } catch (err) { moveOut(`<div class="moveerr">${esc(err.message)}</div>`); return; }
+
+  if (report.problem) {
+    moveOut(`<div class="moveerr">${esc(report.problem)}</div>`);
+    return;
+  }
+
+  const lines = [
+    ['THE APP', report.source],
+    ['WOULD GO TO', report.destination],
+    ['YOUR ORDERS', `${esc(report.data_source)}<br>
+      <i>${esc(report.stored || 'nothing stored yet')}</i>`],
+    ['WOULD END UP IN', report.data_destination],
+  ];
+  const table = `<table class="grid calc"><tbody>${lines.map(
+    ([k, v]) => `<tr><td class="ck">${k}</td><td class="path">${v}</td></tr>`
+  ).join('')}</tbody></table>`;
+
+  if (!thenCopy) {
+    moveOut(table + `<div class="note">That folder can be written to.
+      Nothing has been copied — press COPY EVERYTHING THERE when you are
+      ready.${report.not_empty ? ' It is not empty; files with the same '
+        + 'names will be overwritten.' : ''}</div>`);
+    return;
+  }
+
+  const sure = confirm(
+    `Copy Order Tracker to:\n\n${report.destination}\n\n`
+    + `Your orders (${report.stored || 'none yet'}) come too.\n`
+    + 'Nothing in the current folder is deleted.');
+  if (!sure) { moveOut(table); return; }
+
+  moveOut(table + '<div class="note">copying… this can take a minute on a '
+    + 'slow drive. Leave this page open.</div>');
+
+  let result;
+  try {
+    result = await postJSON('/api/move', { folder });
+  } catch (err) {
+    moveOut(table + `<div class="moveerr">${esc(err.message)}</div>`);
+    return;
+  }
+
+  moveOut(`
+    <div class="movedone">
+      <b>Done — it now lives in ${esc(result.destination)}</b>
+      <ul>${result.steps.map(step => `<li>${esc(step)}</li>`).join('')}</ul>
+      <p>To start using the copy: click <b>QUIT</b> at the top of this page,
+        then open Order Tracker from your desktop icon — it points at the new
+        folder now. Check the bottom of the screen says the new location.</p>
+      <p class="note">The folder it was copied from is untouched. Delete
+        ${esc(result.source)} yourself once you are happy.</p>
+    </div>`);
+  toast('Copied to ' + result.destination, 'ok');
 }
 
 async function saveSetup() {
