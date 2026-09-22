@@ -49,6 +49,7 @@
   <div class="navspacer"></div>
   <button id="btn-new" class="accent"><b>N</b> NEW ORDER</button>
   <a id="btn-export" href="/api/export/orders.csv" class="navlink">EXPORT CSV</a>
+  <button id="btn-quit" class="quit">QUIT</button>
 </nav>
 
 <main id="main">
@@ -62,6 +63,15 @@
 
 <aside id="detail" class="hidden"></aside>
 <div id="modal" class="hidden"></div>
+<div id="stopped" class="hidden">
+  <div class="splashinner">
+    <img class="splashmark" src="/assets/ordertracker.png" alt="">
+    <div class="splashhello">STOPPED</div>
+    <div class="splashname">Order Tracker is no longer running</div>
+    <div class="splashhint">You can close this tab. Start it again from the
+      desktop icon whenever you need it.</div>
+  </div>
+</div>
 <div id="toast"></div>
 <div id="dropveil" class="hidden"><div>drop files to file them against an order</div></div>
 

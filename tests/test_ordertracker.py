@@ -613,6 +613,26 @@ class TestHttpApi(unittest.TestCase):
         code, body = self.get("/api/search?q=QX-55219")
         self.assertEqual(len(json.loads(body)["documents"]), 1)
 
+    def test_a_write_from_another_site_is_refused(self):
+        """A page on some other site must not be able to change anything."""
+        request = urllib.request.Request(
+            self.base + "/api/orders",
+            data=json.dumps({"order_no": "SO-EVIL", "company": "Evil"}).encode(),
+            headers={"Content-Type": "application/json",
+                     "Origin": "http://evil.example"})
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request)
+        self.assertEqual(caught.exception.code, 403)
+
+    def test_a_write_from_our_own_page_is_allowed(self):
+        request = urllib.request.Request(
+            self.base + "/api/orders",
+            data=json.dumps({"order_no": "SO-OWN", "company": "Acme"}).encode(),
+            headers={"Content-Type": "application/json",
+                     "Origin": self.base})
+        with urllib.request.urlopen(request) as response:
+            self.assertEqual(response.status, 200)
+
     def test_csv_export(self):
         code, body = self.get("/api/export/orders.csv")
         self.assertEqual(code, 200)
@@ -652,6 +672,34 @@ class TestStorageFailures(unittest.TestCase):
         finally:
             config.DB_PATH = original
             db._local.__dict__.clear()
+
+
+class TestQuitting(unittest.TestCase):
+    """The app can be stopped from the browser, so no console is needed."""
+
+    def test_quit_stops_the_server(self):
+        from ordertracker import server
+
+        fresh_db()
+        httpd = server.serve("127.0.0.1", 8813)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        base = "http://127.0.0.1:8813"
+
+        with urllib.request.urlopen(base + "/api/ping", timeout=5) as response:
+            self.assertEqual(json.loads(response.read())["app"], "order-tracker")
+
+        request = urllib.request.Request(base + "/api/quit", data=b"{}",
+                                         headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertTrue(json.loads(response.read())["stopped"])
+
+        thread.join(timeout=10)
+        self.assertFalse(thread.is_alive(), "the server kept running after quit")
+        httpd.server_close()
+
+        with self.assertRaises((urllib.error.URLError, OSError)):
+            urllib.request.urlopen(base + "/api/ping", timeout=3)
 
 
 # ----------------------------------------------------------------- settings

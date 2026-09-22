@@ -9,6 +9,7 @@ import io
 import json
 import mimetypes
 import re
+import threading
 import traceback
 import urllib.parse
 from http import HTTPStatus
@@ -315,6 +316,16 @@ def api_export(handler, match):
     return None
 
 
+@route("POST", r"/api/quit")
+def api_quit(handler, match):
+    """Stop the app from the browser, so no console window is needed."""
+    # shutdown() blocks until the serving loop ends, so it cannot be called
+    # from the thread serving this very request. The short delay lets this
+    # reply reach the browser before the socket goes away.
+    threading.Timer(0.4, handler.server.shutdown).start()
+    return {"ok": True, "stopped": True}
+
+
 @route("POST", r"/api/maintenance/reindex")
 def api_reindex(handler, match):
     db.rebuild_search_index()
@@ -341,6 +352,19 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/") and not self.path.startswith("/api/bootstrap"):
             print(f"  {self.command} {self.path}")
 
+    def _origin_is_ours(self) -> bool:
+        """Reject a write triggered by some other page in the browser.
+
+        Our own requests carry an Origin matching the address bar. A page on
+        another site would carry its own, and must not be able to change or
+        stop anything here.
+        """
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True  # not a browser, or a same-origin navigation
+        host = (self.headers.get("Host") or "").strip()
+        return origin in (f"http://{host}", f"https://{host}")
+
     def _host_is_local(self) -> bool:
         """Refuse requests that arrive under some other hostname.
 
@@ -365,6 +389,9 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch(self, method):
         if not self._host_is_local():
             self.send_error(HTTPStatus.FORBIDDEN, "Non-local host header")
+            return
+        if method != "GET" and not self._origin_is_ours():
+            self.send_error(HTTPStatus.FORBIDDEN, "Cross-site request")
             return
 
         parsed = urllib.parse.urlparse(self.path)

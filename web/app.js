@@ -1278,5 +1278,21 @@ $('#cmd').addEventListener('keydown', e => {
 });
 $$('#nav button[data-view]').forEach(b => { b.onclick = () => show(b.dataset.view); });
 $('#btn-new').onclick = newOrderModal;
+$('#btn-quit').onclick = quitApp;
+
+async function quitApp() {
+  const confirmed = confirm(
+    'Stop Order Tracker?\n\n'
+    + 'Your data is saved as you go, so nothing is lost. Start it again from '
+    + 'the desktop icon.');
+  if (!confirmed) return;
+
+  try {
+    await postJSON('/api/quit', {});
+  } catch (err) {
+    // The server often drops the connection as it stops, which is expected.
+  }
+  $('#stopped').classList.remove('hidden');
+}
 
 boot();

@@ -107,10 +107,15 @@ def main(argv=None):
     parser.add_argument("--no-shortcut", dest="shortcut", action="store_false")
     parser.add_argument("--no-move", dest="move", action="store_false",
                         help="leave existing data where it is")
-    parser.set_defaults(shortcut=None, move=True)
+    parser.add_argument("--portable", dest="portable", action="store_true",
+                        help="keep everything in the app folder, so the whole "
+                             "app can live on a personal or removable drive")
+    parser.add_argument("--not-portable", dest="portable", action="store_false")
+    parser.set_defaults(shortcut=None, move=True, portable=None)
     args = parser.parse_args(argv)
 
-    interactive = args.folder is None and args.name is None and args.shortcut is None
+    interactive = (args.folder is None and args.name is None
+                   and args.shortcut is None and args.portable is None)
 
     print("\nORDER TRACKER — setup\n")
 
@@ -124,18 +129,37 @@ def main(argv=None):
         print("    (inside the app folder — fine, but it moves if you re-download)")
     print()
 
-    # --- where to keep everything ----------------------------------------
-    if args.folder is not None:
+    # --- portable, or a folder of your choosing --------------------------
+    if args.portable is not None:
+        portable = args.portable
+    elif interactive:
+        print("  Two ways to store things:\n")
+        print("    1. A folder you pick — your data lives there, the app stays"
+              " where it is.")
+        print("    2. Portable — the whole app and its data sit together in "
+              "this folder,\n       so it runs from a personal or USB drive on"
+              " any machine.\n")
+        portable = ask_yes("  Set it up as portable?", default=False)
+    else:
+        portable = config.PORTABLE
+
+    if portable:
+        chosen = ""
+        print(f"\n  Portable: everything stays in {config.BASE_DIR}")
+    elif args.folder is not None:
         chosen = args.folder
     elif interactive:
-        print("  Pick a folder on any drive — an external or network drive is fine.")
+        print("\n  Pick a folder on any drive — an external or network drive "
+              "is fine.")
         print(r'  For example:  D:\OrderTracker')
         chosen = ask("\n  Where should Order Tracker keep your data? "
                      "(Enter to leave it as it is)", current)
     else:
         chosen = current
 
-    workspace = settings.expand(chosen).resolve() if chosen.strip() else config.BASE_DIR
+    workspace = (config.BASE_DIR if portable
+                 else (settings.expand(chosen).resolve() if chosen.strip()
+                       else config.BASE_DIR))
     usable, reason = folder_is_usable(workspace)
     if not usable:
         print(f"\n  That folder will not work: {reason}")
@@ -177,8 +201,21 @@ def main(argv=None):
     else:
         welcome_name = saved.get("welcome_name", "")
 
+    # The marker file is what makes portable mode portable: it travels with
+    # the folder, so the app does not depend on a setting saved on one machine.
+    if portable:
+        config.PORTABLE_MARKER.write_text(
+            "This file makes Order Tracker portable.\n\n"
+            "While it is here, orders and documents are kept in this folder\n"
+            "rather than wherever setup.py was pointed, and the app works\n"
+            "whatever drive letter this folder ends up with.\n\n"
+            "Delete it to go back to a chosen folder.\n",
+            encoding="utf-8")
+    elif config.PORTABLE_MARKER.exists():
+        config.PORTABLE_MARKER.unlink()
+
     settings_file = settings.save(
-        workspace=str(workspace) if workspace != config.BASE_DIR else "",
+        workspace="" if (portable or workspace == config.BASE_DIR) else str(workspace),
         welcome_name=welcome_name,
         show_welcome=True,
     )
@@ -209,7 +246,10 @@ def main(argv=None):
     # --- summary ----------------------------------------------------------
     print("\n  All set.\n")
     print(f"    data folder    {new_data_dir}")
-    print(f"    settings       {settings_file}")
+    if portable:
+        print("    mode           portable — move this whole folder anywhere")
+    else:
+        print(f"    settings       {settings_file}")
     if welcome_name:
         print(f"    welcome name   {welcome_name}")
     if shortcut_path:

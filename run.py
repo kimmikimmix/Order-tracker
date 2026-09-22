@@ -74,9 +74,14 @@ def main(argv=None):
     if args.where:
         from ordertracker import settings
         print(f"\n  data folder      {config.DATA_DIR}")
-        print(f"  settings file    {settings.settings_path()}")
-        chosen = settings.load().get("workspace") or ""
-        print(f"  chosen location  {chosen or '(none — using the app folder)'}")
+        print(f"  app folder       {config.BASE_DIR}")
+        if config.PORTABLE:
+            print("  mode             portable — everything lives in the app "
+                  "folder, and\n                   the saved setting is ignored")
+        else:
+            print(f"  settings file    {settings.settings_path()}")
+            chosen = settings.load().get("workspace") or ""
+            print(f"  chosen location  {chosen or '(none — using the app folder)'}")
         print("\n  Change it with:  py setup.py\n")
         return 0
 
@@ -133,7 +138,7 @@ def main(argv=None):
     print("  ORDER TRACKER")
     print(f"  {url}")
     print(f"  data: {config.DATA_DIR}")
-    print("  press Ctrl+C to stop")
+    print("  to stop: click QUIT in the app, or press Ctrl+C here")
     print()
 
     if not args.no_browser:

@@ -13,10 +13,17 @@ from . import settings
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Portable mode: a file called portable.txt next to run.py means "keep
+# everything in this folder and ignore any saved setting". That makes the
+# whole app self-contained, so it can live on a removable or personal drive
+# and still work when the drive letter changes between machines.
+PORTABLE_MARKER = BASE_DIR / "portable.txt"
+PORTABLE = PORTABLE_MARKER.exists()
+
 # Where your orders and documents are kept. Pick this once with `setup.py`
 # — it is remembered outside the app folder, so re-downloading or updating
 # the app never moves your data.
-WORKSPACE = settings.workspace() or BASE_DIR
+WORKSPACE = BASE_DIR if PORTABLE else (settings.workspace() or BASE_DIR)
 
 DATA_DIR = Path(os.environ.get("ORDER_TRACKER_DATA", WORKSPACE / "data"))
 DEMO_DIR = WORKSPACE / "demo-data"

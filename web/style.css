@@ -445,3 +445,17 @@ pre.textdump { white-space: pre-wrap; font-size: 11px; color: var(--text);
   .splashinner { animation: none; }
   .splashbar > span { animation: none; width: 100%; }
 }
+
+/* ---------- quit ---------- */
+
+#nav button.quit { color: var(--dim); }
+#nav button.quit:hover { color: var(--red); background: #1f1213; }
+
+#stopped {
+  position: fixed; inset: 0; z-index: 210;
+  background: radial-gradient(ellipse at 50% 42%, #16181d 0%, #0a0a0b 62%);
+  display: flex; align-items: center; justify-content: center;
+}
+#stopped .splashhello { color: var(--dim); }
+#stopped .splashmark { filter: grayscale(.7); opacity: .6; box-shadow: none; }
+#stopped .splashhint { max-width: 330px; line-height: 1.7; }
