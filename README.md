@@ -355,15 +355,25 @@ fails:
 python3 doctor.py              # Windows: py doctor.py
 ```
 
+It reports whether Windows' ransomware protection is switched on, tries
+several other folders and tells you which of them will hold your orders,
+and hands you the command to switch to one.
+
 The usual culprit on Windows is something guarding the folder rather than
-anything in the app — ransomware protection (Windows Security → Virus &
-threat protection → Controlled folder access), OneDrive keeping the folder
-online-only, or antivirus blocking new database files. Keeping the data
-outside the protected area gets past all three:
+anything in the app. Controlled folder access blocks **per application**,
+which is why `git` can fill a folder that `python.exe` is then refused a
+single file in. Either allow it — Windows Security → Virus & threat
+protection → Ransomware protection → Allow an app through Controlled folder
+access → add your `python.exe` — or keep the data somewhere it does not
+watch, which takes one command and is remembered:
 
 ```
-py run.py --demo --data "%LOCALAPPDATA%\OrderTracker"
+py setup.py --folder "%LOCALAPPDATA%\OrderTracker"
 ```
+
+A folder left behind by an earlier attempt can also carry permissions that
+deny writes; the check says whether the folder was already there, and
+deleting it is then the whole fix.
 
 **On Windows** use `py run.py`. If Python isn't installed, get it from
 python.org and tick "Add Python to PATH" during setup.
@@ -494,7 +504,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 178 tests, no dependencies
+python3 -m unittest discover tests     # 186 tests, no dependencies
 ```
 
 The pieces:

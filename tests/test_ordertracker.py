@@ -2376,3 +2376,46 @@ class TestInUseNote(unittest.TestCase):
         (self.holder / "not-a-folder").write_text("a file", encoding="utf-8")
         self.assertIsNone(self.inuse.claim())
         self.assertIsNone(self.inuse.held_elsewhere())
+
+
+# ------------------------------------------------------------- the diagnosis
+
+class TestDoctor(unittest.TestCase):
+    """When a folder refuses to hold the order book, the check has to find
+    one that will and hand over the command that switches to it."""
+
+    def setUp(self):
+        import doctor
+
+        self.doctor = doctor
+        self.holder = Path(tempfile.mkdtemp(prefix="ot-doctor-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.holder, ignore_errors=True)
+
+    def test_a_usable_folder_reports_no_problem(self):
+        self.assertEqual(self.doctor.folder_works(self.holder / "fine"), "")
+
+    def test_a_folder_that_cannot_be_made_says_why(self):
+        blocker = self.holder / "in the way"
+        blocker.write_text("a file", encoding="utf-8")
+        problem = self.doctor.folder_works(blocker / "inside")
+        self.assertTrue(problem)
+        self.assertIn("Error", problem)
+
+    def test_the_candidates_leave_out_the_folder_that_just_failed(self):
+        saved = config.DATA_DIR
+        config.DATA_DIR = Path(tempfile.gettempdir()) / "order-tracker-data"
+        try:
+            places = self.doctor.candidate_folders()
+            self.assertNotIn(config.DATA_DIR, places)
+            self.assertTrue(places, "nothing was offered as an alternative")
+        finally:
+            config.DATA_DIR = saved
+
+    def test_ransomware_protection_is_only_asked_about_on_windows(self):
+        if sys.platform != "win32":
+            self.assertEqual(self.doctor.controlled_folder_access(), "")
+        else:                                     # pragma: no cover
+            self.assertIn(self.doctor.controlled_folder_access(),
+                          ("off", "ON", "audit only", "could not be read"))

@@ -17,6 +17,76 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
+CFA_KEYS = [
+    (r"SOFTWARE\Microsoft\Windows Defender\Windows Defender Exploit Guard"
+     r"\Controlled Folder Access"),
+    (r"SOFTWARE\Policies\Microsoft\Windows Defender"
+     r"\Windows Defender Exploit Guard\Controlled Folder Access"),
+]
+
+
+def controlled_folder_access() -> str:
+    """Whether Windows' ransomware protection is on, if we can find out.
+
+    It blocks writes per application, which is why git can fill a folder
+    that python.exe is then refused a single file in.
+    """
+    if sys.platform != "win32":
+        return ""
+    try:
+        import winreg
+    except ImportError:
+        return ""
+
+    for path in CFA_KEYS:
+        for view in (winreg.KEY_WOW64_64KEY, 0):
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0,
+                                    winreg.KEY_READ | view) as key:
+                    value, _ = winreg.QueryValueEx(
+                        key, "EnableControlledFolderAccess")
+            except OSError:
+                continue
+            return {0: "off", 1: "ON", 2: "audit only"}.get(
+                int(value), f"set to {value}")
+    return "could not be read"
+
+
+def candidate_folders():
+    """Places to keep the data, best first, for when the app folder is out."""
+    from ordertracker import config
+
+    places = []
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        places.append(Path(local) / "OrderTracker")
+    places.append(Path.home() / "OrderTracker")
+    places.append(Path(tempfile.gettempdir()) / "order-tracker-data")
+    seen, out = set(), []
+    for place in places:
+        if place not in seen and place != config.DATA_DIR:
+            seen.add(place)
+            out.append(place)
+    return out
+
+
+def folder_works(folder: Path) -> str:
+    """Empty when the folder can hold the order book, else why not."""
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        probe = folder / ".write-probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        db_probe = folder / ".db-probe"
+        conn = sqlite3.connect(db_probe, timeout=10)
+        conn.execute("CREATE TABLE IF NOT EXISTS probe (x INTEGER)")
+        conn.close()
+        db_probe.unlink(missing_ok=True)
+    except (OSError, sqlite3.Error) as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return ""
+
+
 def line(label, value):
     print(f"  {label:<22} {value}")
 
@@ -65,8 +135,17 @@ def main():
                 print(f"  ! {text}" if text else "  !")
             print()
 
-        ok = check("create the folder",
-                   lambda: docs_dir.mkdir(parents=True, exist_ok=True))
+        # Whether the folder is new matters: one left behind by an earlier
+        # run — or made while elevated — can carry permissions that deny
+        # writes, and deleting it is then the whole fix.
+        was_there = data_dir.exists()
+
+        def make_folder():
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            return ("it was already there" if was_there
+                    else "created it just now")
+
+        ok = check("create the folder", make_folder)
         if ok:
             probe = data_dir / ".write-probe"
 
@@ -76,6 +155,12 @@ def main():
                 return "folder is writable"
 
             ok = check("write a file there", write_probe)
+            if not ok and was_there:
+                print()
+                print("         That folder already existed. One left over from")
+                print("         an earlier attempt can carry permissions that")
+                print("         deny writes. Deleting it is worth trying:")
+                print(f"             rmdir /s /q \"{data_dir}\"")
 
         if ok:
             def open_database():
@@ -99,19 +184,41 @@ def main():
         print("  a rename error on .git/config.lock partway through a clone.")
         print("  Keep the app on this machine and back up to the share.")
 
-    print("\nFallback location")
-    fallback = Path(tempfile.gettempdir()) / "order-tracker-data"
+    guard = controlled_folder_access()
+    if guard:
+        print("\nWindows ransomware protection")
+        line("controlled folder access", guard)
+        if guard == "ON":
+            print("\n  That is almost certainly what is refusing the writes. It")
+            print("  blocks per application, which is why git can fill a folder")
+            print("  that python.exe is then denied a single file in.\n")
+            print("  To allow it: Windows Security > Virus & threat protection")
+            print("  > Ransomware protection > Manage ransomware protection")
+            print("  > Allow an app through Controlled folder access")
+            print(f"  > Add an allowed app, and pick:\n")
+            print(f"      {sys.executable}")
+            print("\n  Or just keep the data somewhere it does not watch, below.")
 
-    def fallback_db():
-        fallback.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(fallback / "orders.db", timeout=10)
-        conn.close()
-        return str(fallback)
+    print("\nSomewhere else to keep the data")
+    working = []
+    for folder in candidate_folders():
+        problem = folder_works(folder)
+        if problem:
+            print(f"  [FAIL] {folder}")
+            print(f"         {problem}")
+        else:
+            print(f"  [ ok ] {folder}")
+            working.append(folder)
 
-    if check("database in a temp folder", fallback_db):
-        print(f"\n  If the checks above failed but this one passed, start the app\n"
-              f"  with its data somewhere else:\n\n"
-              f"      py run.py --demo --data \"{fallback}\"\n")
+    if working:
+        print("\n  Any of those will hold your orders. This remembers the")
+        print("  choice, so you only do it once:\n")
+        print(f'      py setup.py --folder "{working[0]}"\n')
+        print("  The app itself can stay where it is.")
+    else:
+        print("\n  None of those worked either, which points at something")
+        print("  blocking python.exe generally rather than one folder.")
+        print("  The allowed-app step above is then the way through.")
 
     print()
     return 0
