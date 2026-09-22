@@ -12,8 +12,10 @@ have checked the copy works and remove it yourself.
 """
 
 import argparse
+import os
 import shutil
 import sqlite3
+import stat
 import sys
 from pathlib import Path
 
@@ -28,6 +30,61 @@ JUNK = ("__pycache__", "*.pyc", "*.pyo", ".DS_Store")
 SKIP = shutil.ignore_patterns(*JUNK, "data", "demo-data")
 SKIP_NO_GIT = shutil.ignore_patterns(*JUNK, "data", "demo-data", ".git")
 SKIP_JUNK_ONLY = shutil.ignore_patterns(*JUNK)
+
+
+def running_copy() -> str | None:
+    """The data folder of an Order Tracker that is running, if one is.
+
+    Copying over the top of a live database is the one way this can leave
+    you worse off than you started, so it is worth a moment to check.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    try:
+        url = f"http://{config.HOST}:{config.PORT}/api/ping"
+        with urllib.request.urlopen(url, timeout=2) as response:
+            answer = json.loads(response.read())
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    if answer.get("app") != "order-tracker":
+        return None
+    return answer.get("data") or "(unknown)"
+
+
+def force_copy(source, target, follow_symlinks=True):
+    """Copy one file, over the top of a read-only one if need be.
+
+    Git keeps everything under .git/objects read-only. Copying onto a folder
+    that already holds them — running this a second time, or copying into a
+    folder that once held a copy — is refused by Windows with "access is
+    denied" unless the read-only flag is cleared first.
+    """
+    if os.path.exists(target):
+        try:
+            os.chmod(target, stat.S_IWRITE | stat.S_IREAD)
+        except OSError:
+            pass  # if it still cannot be written, the copy below will say so
+    return shutil.copy2(source, target, follow_symlinks=follow_symlinks)
+
+
+def describe_copy_failure(exc) -> list[str]:
+    """Turn whatever copytree threw into lines a person can act on."""
+    lines = []
+    failures = exc.args[0] if isinstance(exc, shutil.Error) and exc.args else None
+    if isinstance(failures, list):
+        for failure in failures[:8]:
+            if isinstance(failure, tuple) and len(failure) == 3:
+                source, _, why = failure
+                lines.append(f"    {source}\n        {why}")
+            else:
+                lines.append(f"    {failure}")
+        if len(failures) > 8:
+            lines.append(f"    … and {len(failures) - 8} more")
+    else:
+        lines.append(f"    {exc}")
+    return lines
 
 
 def copy_database(source_db: Path, target_db: Path) -> None:
@@ -89,6 +146,10 @@ def main(argv=None):
     parser.add_argument("--no-git", action="store_true",
                         help="skip the .git folder (you then cannot `git pull` there)")
     parser.add_argument("--no-shortcut", action="store_true")
+    parser.add_argument("--check", action="store_true",
+                        help="test the destination and report, without copying")
+    parser.add_argument("--force", action="store_true",
+                        help="copy even though Order Tracker is still running")
     args = parser.parse_args(argv)
 
     source = config.BASE_DIR.resolve()
@@ -106,11 +167,32 @@ def main(argv=None):
         print("  app into itself. Pick a folder somewhere else.\n")
         return 1
 
+    live = running_copy()
+    if live and not args.check and not args.force:
+        print("  Order Tracker is still running, and its orders are open.")
+        print(f"  It is using {live}")
+        print()
+        print("  Close it first, or the copy can end up with a half-written")
+        print("  database: click QUIT in the app, then run this again.")
+        print()
+        print("  (If you are sure it is safe, add --force.)\n")
+        return 1
+
     ok, reason = usable(destination)
     if not ok:
         print(f"  That folder will not work: {reason}")
         print("  Nothing has been copied.\n")
         return 1
+
+    if args.check:
+        print(f"  [ ok ] {destination} can be written to")
+        print(f"  [ ok ] a database can be created there")
+        source_files = sum(1 for _ in source.rglob("*") if _.is_file())
+        print(f"  [ ok ] {source_files} file(s) would be copied from {source}")
+        print(f"  [ ok ] your orders would come from {config.DB_PATH}")
+        print("\n  Nothing was copied. Run the same command without --check "
+              "to do it.\n")
+        return 0
 
     if any(destination.iterdir()):
         print("  Note: that folder is not empty. Files with the same names will")
@@ -120,9 +202,19 @@ def main(argv=None):
     try:
         shutil.copytree(source, destination,
                         ignore=SKIP_NO_GIT if args.no_git else SKIP,
-                        dirs_exist_ok=True)
-    except OSError as exc:
-        print(f"  The copy failed: {exc}")
+                        copy_function=force_copy, dirs_exist_ok=True)
+    except (shutil.Error, OSError) as exc:
+        print("  The copy did not finish. These files could not be written:\n")
+        for line in describe_copy_failure(exc):
+            print(line)
+        print("\n  On Windows that is nearly always one of three things:")
+        print("    · Order Tracker is still running — click QUIT, then try again")
+        print("    · you do not have permission to write to that drive")
+        print("      (common on a company or network drive)")
+        print("    · antivirus or Controlled folder access is guarding it")
+        print("\n  You can also skip the git history, which is what most of")
+        print("  these files are, and does not affect the app:\n")
+        print(f'      py move_to.py "{args.destination}" --no-git\n')
         print("  Nothing has been changed in the original folder.\n")
         return 1
     print(f"  [ ok ] copied the app to {destination}")
@@ -165,6 +257,19 @@ def main(argv=None):
         "Delete it to go back to a chosen folder.\n",
         encoding="utf-8")
     print("  [ ok ] set the copy to portable — it keeps its data in its own folder")
+
+    # A portable folder reads its settings from beside run.py, so the welcome
+    # name and the rest have to travel with it. Everything else you can
+    # change on the SETUP page already lives in the database, which has just
+    # been copied across.
+    carried = dict(settings.load())
+    carried["workspace"] = ""          # portable ignores it; leave it clear
+    try:
+        settings.dump(destination / "settings.json", carried)
+        print("  [ ok ] carried your settings over "
+              f"(welcome name: {carried.get('welcome_name') or 'not set'})")
+    except OSError as exc:
+        print(f"  [ -- ] the settings could not be carried over: {exc}")
 
     # --- repoint the desktop shortcut ------------------------------------
     shortcut_path = None

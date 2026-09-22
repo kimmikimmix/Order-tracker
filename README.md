@@ -185,17 +185,38 @@ switches the copy to portable mode, and repoints the desktop shortcut at it.
 Nothing is deleted — the old folder stays until you check the copy works and
 remove it yourself.
 
-If you would rather do it by hand, copy the folder across and then run this
-inside the copy:
+**Everything comes with it.** Your orders and documents, the settings from the
+SETUP page (they live in the database), your name on the welcome screen, and
+the git history, so `git pull` still updates the app from its new home.
+
+**Close Order Tracker first.** It refuses to run while the app is open,
+because copying a database that is being written to is the one way this can
+leave you worse off than you started. Click QUIT, then run it.
+
+To test a destination before committing to it — useful if a copy has already
+gone wrong once:
+
+```
+py move_to.py "G:\my folder\Order Tracker" --check
+```
+
+That reports whether the folder can be written to and what would be copied,
+and copies nothing. If the copy itself fails, it names the files it could not
+write rather than printing a wall of Python. `--no-git` leaves out the git
+history, which is most of the files and none of the app.
+
+If you would rather do it by hand: close the app, copy the folder across in
+File Explorer (everything, including `data`), then run this inside the copy:
 
 ```
 py setup.py --portable
 ```
 
 That writes a `portable.txt` marker beside `run.py`. While that file is
-there, orders and documents stay inside the app folder and any saved location
-is ignored, so the folder works whatever drive letter it gets on whatever
-machine. Move it, copy it, back it up — it is one folder.
+there, orders and documents stay inside the app folder, any saved location is
+ignored, and the settings file moves into the folder too — so the folder works
+whatever drive letter it gets on whatever machine, and your welcome name comes
+with it. Move it, copy it, back it up — it is one folder.
 
 Delete `portable.txt` to go back to a chosen data folder.
 
@@ -278,14 +299,18 @@ If you never ran `setup.py`, it sits beside the app instead. `python3 run.py
 --where` always tells you.
 
 Back it up by copying that folder. Move it to another machine by copying it
-there. There is no other state — the only thing kept elsewhere is a small
-settings file recording your chosen folder and welcome name:
+there.
+
+Everything you change on the SETUP page is kept in `orders.db`, so it travels
+with your data. The only thing kept elsewhere is a small settings file
+recording your chosen folder and welcome name:
 
 | | |
 | --- | --- |
 | Windows | `%LOCALAPPDATA%\OrderTracker\settings.json` |
 | macOS | `~/Library/Application Support/OrderTracker/settings.json` |
 | Linux | `~/.config/order-tracker/settings.json` |
+| **Portable** | `settings.json` beside `run.py`, so nothing is left behind |
 
 Data folders are excluded from git, so customer information is never
 committed.
@@ -348,7 +373,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 132 tests, no dependencies
+python3 -m unittest discover tests     # 139 tests, no dependencies
 ```
 
 The pieces:

@@ -248,8 +248,7 @@ def main(argv=None):
     print(f"    data folder    {new_data_dir}")
     if portable:
         print("    mode           portable — move this whole folder anywhere")
-    else:
-        print(f"    settings       {settings_file}")
+    print(f"    settings       {settings_file}")
     if welcome_name:
         print(f"    welcome name   {welcome_name}")
     if shortcut_path:

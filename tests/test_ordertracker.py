@@ -839,6 +839,89 @@ class TestMoveToAnotherDrive(unittest.TestCase):
                                        "--no-shortcut"]), 1)
         self.assertEqual(move_to.main([str(config.BASE_DIR), "--no-shortcut"]), 1)
 
+    def test_a_second_copy_over_read_only_files_still_works(self):
+        """Git keeps its objects read-only, and Windows refuses to overwrite
+        one. Copying twice — or into a folder that held a copy before — must
+        not fail with "access is denied"."""
+        import move_to
+
+        orders.create_order({"order_no": "SO-TWICE", "company": "Acme"})
+        self.assertEqual(
+            move_to.main([str(self.target), "--no-git", "--no-shortcut"]), 0)
+
+        # Make a copied file read-only, as git's object files are.
+        stubborn = self.target / "run.py"
+        stubborn.chmod(0o444)
+
+        self.assertEqual(
+            move_to.main([str(self.target), "--no-git", "--no-shortcut"]), 0,
+            "a repeat copy was refused")
+        self.assertTrue(stubborn.exists())
+
+    def test_the_settings_travel_with_the_copy(self):
+        import move_to
+        from ordertracker import settings
+
+        home = Path(tempfile.mkdtemp(prefix="ot-home-"))
+        previous = {k: os.environ.get(k) for k in
+                    ("XDG_CONFIG_HOME", "LOCALAPPDATA", "HOME")}
+        os.environ.update({"XDG_CONFIG_HOME": str(home),
+                           "LOCALAPPDATA": str(home), "HOME": str(home)})
+        try:
+            settings.save(welcome_name="김영진", show_welcome=True,
+                          workspace=str(self.live))
+            self.assertEqual(
+                move_to.main([str(self.target), "--no-git", "--no-shortcut"]), 0)
+
+            carried = settings.read_file(self.target / "settings.json")
+            self.assertIsNotNone(carried, "no settings file in the copy")
+            self.assertEqual(carried["welcome_name"], "김영진")
+            # Portable keeps its data in its own folder, so the old path
+            # must not follow it onto the new drive.
+            self.assertEqual(carried["workspace"], "")
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            shutil.rmtree(home, ignore_errors=True)
+
+    def test_check_reports_without_copying_anything(self):
+        import move_to
+
+        code = move_to.main([str(self.target), "--check", "--no-shortcut"])
+        self.assertEqual(code, 0)
+        self.assertFalse((self.target / "run.py").exists(),
+                         "--check copied something")
+
+    def test_copying_while_the_app_is_running_is_refused(self):
+        """A live database copied mid-write is the one way this can leave
+        someone worse off than they started."""
+        import move_to
+
+        real = move_to.running_copy
+        move_to.running_copy = lambda: "/somewhere/data"
+        try:
+            self.assertEqual(
+                move_to.main([str(self.target), "--no-git", "--no-shortcut"]), 1)
+            self.assertFalse((self.target / "run.py").exists())
+            # --force is the way past it, for someone who knows better.
+            self.assertEqual(
+                move_to.main([str(self.target), "--no-git", "--no-shortcut",
+                              "--force"]), 0)
+        finally:
+            move_to.running_copy = real
+
+    def test_a_refused_file_is_named_rather_than_dumped(self):
+        import move_to
+
+        failure = shutil.Error([("G:/x/run.py", "G:/y/run.py",
+                                 "[Errno 13] Permission denied")])
+        lines = "\n".join(move_to.describe_copy_failure(failure))
+        self.assertIn("G:/x/run.py", lines)
+        self.assertIn("Permission denied", lines)
+
 
 # ----------------------------------------------------------------- settings
 
@@ -879,6 +962,48 @@ class TestSettings(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{not json at all", encoding="utf-8")
         self.assertEqual(self.settings.load()["workspace"], "")
+
+    def test_a_portable_folder_keeps_its_settings_beside_run_py(self):
+        """Unplug the drive, plug it into another machine, and your name on
+        the welcome screen comes with it."""
+        folder = self.home / "portable app"
+        (folder / "ordertracker").mkdir(parents=True)
+        marker = folder / "portable.txt"
+        marker.write_text("portable", encoding="utf-8")
+
+        real_marker = self.settings.PORTABLE_MARKER
+        self.settings.PORTABLE_MARKER = marker
+        try:
+            self.assertTrue(self.settings.portable())
+            self.assertEqual(self.settings.settings_path(),
+                             folder / "settings.json")
+            self.settings.save(welcome_name="Ji-ho")
+            self.assertTrue((folder / "settings.json").exists())
+            self.assertEqual(self.settings.load()["welcome_name"], "Ji-ho")
+            # Nothing was written to this machine's own settings folder.
+            self.assertFalse((self.settings.machine_dir() / "settings.json").exists())
+        finally:
+            self.settings.PORTABLE_MARKER = real_marker
+
+    def test_going_portable_carries_this_machine_settings_over(self):
+        self.settings.save(welcome_name="Rachel")
+
+        folder = self.home / "newly portable"
+        folder.mkdir(parents=True)
+        marker = folder / "portable.txt"
+        marker.write_text("portable", encoding="utf-8")
+
+        real_marker = self.settings.PORTABLE_MARKER
+        self.settings.PORTABLE_MARKER = marker
+        try:
+            # No settings of its own yet, so this machine's are read instead.
+            self.assertEqual(self.settings.load()["welcome_name"], "Rachel")
+            self.settings.save(welcome_name="Rachel")
+            self.assertEqual(
+                self.settings.read_file(folder / "settings.json")["welcome_name"],
+                "Rachel")
+        finally:
+            self.settings.PORTABLE_MARKER = real_marker
 
     def test_unknown_keys_are_ignored(self):
         path = self.settings.settings_path()
