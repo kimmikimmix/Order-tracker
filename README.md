@@ -1,8 +1,9 @@
 # Order Tracker
 
-A local, Bloomberg-style terminal for a sales desk: every order from every
-customer on one dense screen, colour-coded by stage, with every piece of
-paperwork filed against the order it belongs to and searchable by its contents.
+A local, Bloomberg-style terminal for a PCB sales desk: every order from every
+customer on one dense screen, colour-coded by stage, with the full build
+specification and cost sheet behind each one, and every piece of paperwork
+filed against the order it belongs to and searchable by its contents.
 
 It runs entirely on your own machine. No server, no cloud account, no
 subscription, and nothing leaves the computer.
@@ -14,6 +15,23 @@ subscription, and nothing leaves the computer.
 **One order book.** Every order across every customer in a single sortable,
 filterable blotter — order number, customer, their PO number, stage, promised
 date, days until due, value, owner, document count.
+
+**Shows you where your customers are, and what time it is there.** The
+dashboard opens on a world map with every customer on it, sized by how much
+work is open and turning red when something is flagged. The day/night line
+sweeps across it in real time, with the sun and the moon at the point each is
+overhead, and a row of clocks underneath tells you who is at their desk right
+now and who is asleep.
+
+**Holds the whole build specification.** Layers, material, panel, finish,
+copper, drills, impedance, BVH — with the conversions done for you: ounces to
+microns and millimetres, a thickness tolerance in percent to a range in
+millimetres, and how many boards come off a working panel.
+
+**Prices the job in won and quotes it in dollars.** Enter the PCB price, and
+for a turnkey order the SMT, the stencils and the components. Inflation and
+markup are applied on top, and the whole sheet totals as you type. One click
+prints the specification and the costing on white paper.
 
 **Tells you what needs chasing.** The dashboard raises flags without being
 asked:
@@ -39,8 +57,79 @@ confirm the mapping before anything is written. Re-importing a fresh export
 updates the orders already on file, matched on order number, which is how you
 refresh statuses in bulk.
 
-**Keyboard-first.** `/` to search, `1`–`5` for views, `j`/`k` to move down the
+**Repeats an order without retyping it.** A repeat customer usually wants the
+same board again. Pick the earlier order and the whole specification and cost
+sheet come across; you give it a new number and change what has moved.
+
+**Backs itself up somewhere else.** Point it at a second folder — another
+drive, a network share — and it copies the order book there every time it
+starts, keeping the last several copies. The status bar always shows when your
+work was last saved and last backed up.
+
+**Keyboard-first.** `/` to search, `1`–`6` for views, `j`/`k` to move down the
 blotter, `enter` to open, `n` for a new order, `esc` to close.
+
+## The build specification and cost sheet
+
+Open any order and there are five tabs: **ORDER**, **SPEC**, **COST**,
+**DOCS** and **HISTORY**.
+
+**SPEC** holds what is being made:
+
+| | |
+| --- | --- |
+| Quotation | quote date, quote reference, contact person |
+| What it is | product type (rigid, flex, flex-rigid), class, CCL material |
+| Size and panel | board size, array size, ups per array, working panel |
+| Stack-up | layers, thickness and tolerance, copper inner and outer, surface finish and its thickness, impedance |
+| Drilling | minimum drill size and how many, total drills, BVH and which layers |
+| Order | options, quantity per lot, number of lots |
+
+Underneath, the things that follow from it are worked out as you type: copper
+weight in ounces, microns and millimetres; the thickness tolerance as a
+millimetre range; how many arrays fit a working panel and how many boards that
+is; how many panels the order needs and how much of each is used.
+
+**COST** is entered in won and shown in both currencies:
+
+- **PCB** — the total, or the price per piece. Fill in either and the other
+  follows from the quantity.
+- **Turnkey** — tick it and SMT, stencils and components appear. Two stencils
+  are needed when both sides are populated; the price per stencil starts from
+  the figure on the SETUP page.
+- **Inflation** (× 1.25 by default) and **markup** (20–30%) can be applied to
+  every total, and the exchange rate converts the result to dollars.
+
+An order keeps the rates it was quoted at. Changing the exchange rate or the
+markup on the SETUP page sets the starting point for new orders and never
+reprices an old quote behind your back.
+
+**PRINT SHEET** opens a clean page on white paper — the specification, the
+costing and the documents on file — ready for `Ctrl+P` or saving as a PDF.
+
+## Putting customers on the map
+
+Open **CUSTOMERS**, edit one, and pick a country. That is enough: the position
+and the time zone follow from it, and a city is used instead when it is one
+the app knows (Shenzhen, San Jose, Stuttgart, Ansan and others). Type a
+latitude and longitude yourself if you want it exact.
+
+The clocks are shown in each customer's own zone and track daylight saving,
+because they are worked out from the zone name rather than a fixed offset.
+
+## Backups, and when it last saved
+
+The status bar at the bottom always shows when your order book last changed
+and when it was last copied somewhere else.
+
+On the **SETUP** page, give it a backup folder — another drive, a USB stick, a
+network share. From then on it takes a copy every time it starts, keeps the
+last ten, and mirrors your documents alongside. **BACK UP NOW** does it on
+demand.
+
+The copy is taken through SQLite's own backup, not by copying the file, so it
+always holds the changes you made seconds earlier. A backup is a complete,
+working order book: point the app at that folder and it opens.
 
 ## Setting it up
 
@@ -209,14 +298,27 @@ Setting `show_welcome` to `false` there turns the splash off entirely.
 
 ## Making it yours
 
-Open `ordertracker/config.py`. It is meant to be edited:
+Most of it is on the **SETUP** page (`6`), no code involved:
+
+- **Money** — exchange rate, the inflation multiplier, the default markup, the
+  stencil price and its expected range.
+- **Alerts** — how many days ahead counts as due soon, how long untouched
+  counts as stalled, the unusable margin around a working panel.
+- **Lists on the order form** — working panels (`CODE | width | height`),
+  surface finishes, CCL materials, product types and classes. One per line;
+  add your own and they appear in the drop-downs straight away.
+- **Welcome screen** — the name you are greeted with, and whether it shows.
+- **Backups** — the folder, how many copies to keep.
+
+These are stored with your data, so they travel with it to another drive.
+
+For the rest, open `ordertracker/config.py`. It is meant to be edited:
 
 - **`PIPELINE`** — the stages an order moves through. Rename them to whatever
   your business says. The blotter, the board and the stage buttons all follow.
 - **`DATE_INPUT_ORDER`** — `"MDY"` reads `03/12/2026` as 3 March;
   `"DMY"` reads it as 12 March. Unambiguous dates (`2026-12-03`, `3-Dec-2026`)
   always work either way.
-- **`DUE_SOON_DAYS`**, **`STALLED_DAYS`** — when the flags fire.
 - **`PO_REQUIRED_FROM`** — the stage at which a missing customer PO becomes a
   problem.
 - **`DOC_KINDS`** — the keywords that classify a dropped file.
@@ -235,6 +337,9 @@ Worth knowing before you rely on it:
   refused, and writes triggered from another website are rejected. Sharing it
   across a team means adding accounts and access control, which this does not
   have. Don't expose the port to a network.
+- **The map is a backdrop, not an atlas.** The coastlines are drawn by hand and
+  deliberately rough. Customer pins are plotted from real coordinates, so they
+  land in the right place regardless.
 - **It doesn't talk to your ERP.** Data arrives by import, by drag-and-drop, or
   by typing. A live connection would be the next thing to build.
 - **Legacy `.doc` and `.xls`** (the old binary formats) can't be read for text.
@@ -243,7 +348,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 76 tests, no dependencies
+python3 -m unittest discover tests     # 132 tests, no dependencies
 ```
 
 The pieces:
@@ -257,8 +362,13 @@ ordertracker/
   config.py                 pipeline, thresholds, paths — edit this first
   settings.py               remembered storage folder and welcome name
   shortcut.py               desktop shortcut for Windows, macOS and Linux
+  prefs.py                  the settings page's values, stored with the data
   db.py                     SQLite schema and full-text indexes
   orders.py                 order logic, alerts, search, dashboard
+  pcb.py                    build specification, conversions and costing
+  printsheet.py             the printable specification and cost sheet
+  geo.py                    countries, positions and time zones
+  backup.py                 the second copy, and when things last saved
   documents.py              file storage, classification, auto-filing
   importer.py               CSV / Excel import and column matching
   xlsx.py                   a small read-only .xlsx reader
@@ -267,6 +377,10 @@ ordertracker/
   sampledata.py             the --demo order book
   extract/                  text out of PDFs, emails, Office files, HTML
 web/                        the single-page front end (no build step)
+  world.js                  hand-drawn coastlines, so no map data is fetched
+  map.js                    the map, the day/night line, sun and moon
+  spec.js                   the specification form and the cost sheet
+  setup.js                  the settings page
 assets/                     app icon (regenerate with tools/make_icon.py)
 tests/                      the test suite
 ```

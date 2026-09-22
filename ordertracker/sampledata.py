@@ -13,27 +13,40 @@ import zlib
 from . import db, documents, orders
 
 COMPANIES = [
-    ("Northwind Industrial GmbH", "NWI", "Marta Lindqvist", "procurement@northwind-ind.example"),
-    ("Acme Components Ltd", "ACME", "Danny Osei", "purchasing@acme-components.example"),
-    ("Kestrel Marine Systems", "KMS", "Priya Raghavan", "supply@kestrelmarine.example"),
-    ("Vantage Medical Supply", "VMS", "Tom Bergeron", "orders@vantagemed.example"),
-    ("Pinnacle Aerospace", "PNA", "Sofia Marchetti", "scm@pinnacle-aero.example"),
-    ("Redwood Packaging Co", "RWP", "Alicia Vance", "buying@redwoodpack.example"),
-    ("Helios Energy Partners", "HEP", "Jonas Weber", "procure@helios-energy.example"),
-    ("Brightline Retail Group", "BRG", "Chen Wei", "vendors@brightline-retail.example"),
+    # name, code, contact, email, country, city
+    ("Northwind Industrial GmbH", "NWI", "Marta Lindqvist",
+     "procurement@northwind-ind.example", "DE", "Stuttgart"),
+    ("Acme Components Ltd", "ACME", "Danny Osei",
+     "purchasing@acme-components.example", "GB", "London"),
+    ("Kestrel Marine Systems", "KMS", "Priya Raghavan",
+     "supply@kestrelmarine.example", "US", "Boston"),
+    ("Vantage Medical Supply", "VMS", "Tom Bergeron",
+     "orders@vantagemed.example", "US", "San Jose"),
+    ("Pinnacle Aerospace", "PNA", "Sofia Marchetti",
+     "scm@pinnacle-aero.example", "FR", "Paris"),
+    ("Redwood Packaging Co", "RWP", "Alicia Vance",
+     "buying@redwoodpack.example", "AU", "Canberra"),
+    ("Helios Energy Partners", "HEP", "Jonas Weber",
+     "procure@helios-energy.example", "JP", "Osaka"),
+    ("Brightline Retail Group", "BRG", "Chen Wei",
+     "vendors@brightline-retail.example", "SG", "Singapore"),
+    ("Hanwoo Electronics", "HWE", "Park Ji-ho",
+     "buy@hanwoo-elec.example", "KR", "Ansan"),
+    ("Andes Instrumentos", "ANI", "Luciana Ferraz",
+     "compras@andes-inst.example", "BR", "Brasilia"),
 ]
 
 PRODUCTS = [
-    "BRK-8841-SS stainless mounting brackets",
-    "FST-1190 fastener kit, zinc",
-    "HX-440 heat exchanger core",
-    "PMP-77 centrifugal pump assembly",
-    "SEN-2210 pressure sensor array",
-    "CBL-905 shielded cable, 500 m drum",
-    "VLV-318 ball valve, 2 inch",
-    "ENC-640 IP66 control enclosure",
-    "GSK-112 gasket set, viton",
-    "MTR-450 servo motor, 3 kW",
+    "6L rigid FR-4, ENIG, 1.6T - motor controller",
+    "4L rigid 185 HR, OSP, 1.0T - power stage",
+    "2L flex polyimide, ENIG, 0.2T - sensor tail",
+    "8L flex-rigid, ENIG, 1.2T - camera head",
+    "4L rigid Rogers 4350B, immersion silver - RF front end",
+    "10L rigid FR-4 TG170, ENEPIG, 2.0T - backplane",
+    "6L rigid FR-4, HASL, 1.6T - I/O breakout",
+    "4L rigid FR-4, ENIG, 0.8T - battery management",
+    "12L rigid FR-4 TG170, ENIG, 2.4T - switch fabric",
+    "2L rigid aluminium, HASL - LED bar",
 ]
 
 OWNERS = ["R. Kim", "J. Alvarez", "S. Doyle", "M. Okafor"]
@@ -48,7 +61,8 @@ def _pdf(lines) -> bytes:
         safe = str(line).replace("\\", r"\\").replace("(", r"\(").replace(")", r"\)")
         parts.append(f"({safe}) Tj")
     parts.append("ET")
-    content = zlib.compress("\n".join(parts).encode("latin-1"))
+    body = "\n".join(parts).encode("latin-1", "replace")
+    content = zlib.compress(body)
 
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -88,15 +102,83 @@ def _eml(sender, sender_name, subject, body, attachment=None) -> bytes:
     return msg.as_bytes()
 
 
+# Working panels, layer counts and finishes a fabricator would actually quote.
+_PANELS = ["J(6)", "J(4)", "AJ(6)", "R(8)", "R(6)", "R(4)"]
+_FINISH = [("ENIG", '2-3µ" Au'), ("HASL", "—"), ("OSP", "0.3µm"),
+           ("IMMERSION SILVER", "0.2µm"), ("ENEPIG", '1-2µ" Au')]
+_MATERIAL = ["FR-4 TG150", "FR-4 TG170", "185 HR", "ROGERS 4350B",
+             "POLYIMIDE", "IT-180A"]
+
+
+def _spec(index, rng, value, order_date, po_number) -> dict:
+    """A plausible build specification and cost sheet for a demo order."""
+    layers = [2, 4, 4, 6, 6, 8, 10, 12][index % 8]
+    thickness = {2: 1.0, 4: 1.0, 6: 1.6, 8: 1.6, 10: 2.0, 12: 2.4}[layers]
+    finish, finish_thickness = _FINISH[index % len(_FINISH)]
+    product_type = ["RIGID", "RIGID", "FLEX", "FLEX-RIGID"][index % 4]
+
+    pcb_x = round(rng.uniform(22, 140), 1)
+    pcb_y = round(rng.uniform(18, 110), 1)
+    ups = rng.choice([1, 2, 2, 4, 6])
+    qty = rng.choice([500, 1000, 2000, 3000, 5000])
+
+    turnkey = index % 3 == 0
+    # Won per piece, loosely following layer count and area.
+    unit = round(layers * 340 + pcb_x * pcb_y * 0.28, -1)
+
+    return {
+        "quote_date": (order_date - datetime.timedelta(days=rng.randint(3, 15))
+                       ).isoformat(),
+        "quote_ref": f"Q-{order_date.year}-{1200 + index}",
+        "contact_person": "",
+        "product_type": product_type,
+        "ipc_class": "CLASS 3" if value > 50000 else "CLASS 2",
+        "ccl_material": _MATERIAL[index % len(_MATERIAL)],
+        "pcb_x_mm": pcb_x,
+        "pcb_y_mm": pcb_y,
+        "array_x_mm": round(pcb_x * (2 if ups > 1 else 1) + 10, 1),
+        "array_y_mm": round(pcb_y * (ups // 2 if ups > 2 else 1) + 10, 1),
+        "ups": ups,
+        "panel_code": _PANELS[index % len(_PANELS)],
+        "surface_finish": finish,
+        "finish_thickness": finish_thickness,
+        "layers": layers,
+        "thickness_mm": thickness,
+        "thickness_tol_pct": 10,
+        "copper_outer_oz": rng.choice([1, 1, 2]),
+        "copper_inner_oz": rng.choice([0.5, 1]),
+        "impedance": 1 if layers >= 6 else 0,
+        "impedance_note": "50Ω single-ended, 100Ω differential"
+                          if layers >= 6 else "",
+        "min_drill_mm": rng.choice([0.2, 0.25, 0.3]),
+        "min_drill_count": rng.randint(40, 600),
+        "total_drill_count": rng.randint(800, 9000),
+        "bvh": 1 if layers >= 8 else 0,
+        "bvh_layers": "1-2, %d-%d" % (layers - 1, layers) if layers >= 8 else "",
+        "options": "V-cut, E-test, UL mark",
+        "qty": qty,
+        "lots": 1,
+        "pcb_unit_krw": unit,
+        "turnkey": 1 if turnkey else 0,
+        "smt_unit_krw": round(unit * 0.55, -1) if turnkey else None,
+        "stencil_count": 2 if turnkey else 0,
+        "stencil_unit_krw": 140000 if turnkey else None,
+        "parts_unit_krw": round(unit * 1.4, -1) if turnkey else None,
+        "inflation_on": 1 if index % 4 == 0 else 0,
+        "markup_on": 1,
+        "markup_pct": rng.choice([20, 25, 30]),
+    }
+
+
 def load(seed: int = 7) -> dict:
     """Create the demo companies, orders and documents. Returns a count."""
     rng = random.Random(seed)
     today = datetime.date.today()
 
-    for name, code, contact, mail in COMPANIES:
+    for name, code, contact, mail, country, city in COMPANIES:
         orders.save_company({
             "name": name, "code": code, "contact_name": contact,
-            "contact_email": mail,
+            "contact_email": mail, "country": country, "city": city,
         })
 
     companies = {c["name"]: c["id"] for c in orders.list_companies()}
@@ -133,6 +215,10 @@ def load(seed: int = 7) -> dict:
         ("Acme Components Ltd", "IN PRODUCTION", -41, -7, 22800, False),
         ("Kestrel Marine Systems", "CONFIRMED", -16, 11, 15750, True),
         ("Vantage Medical Supply", "ORDER RECEIVED", -5, 33, 5200, False),
+        ("Hanwoo Electronics", "IN PRODUCTION", -22, 8, 31500, True),
+        ("Hanwoo Electronics", "QUOTE", -2, 40, 7600, False),
+        ("Andes Instrumentos", "CONFIRMED", -14, 19, 11250, True),
+        ("Andes Instrumentos", "SHIPPED", -48, -6, 26400, True),
     ]
 
     created = 0
@@ -174,6 +260,12 @@ def load(seed: int = 7) -> dict:
                              (stale.isoformat() + " 09:00:00", order_id))
 
         contact = next(c for c in COMPANIES if c[0] == company)
+
+        # Most orders carry a full build spec, so the SPEC and COST tabs and
+        # the printable sheet have something real to show straight away.
+        if status != "CANCELLED":
+            orders.save_spec(order_id, _spec(index, rng, value,
+                                             order_date, po_number))
 
         if with_po:
             pdf = _pdf([

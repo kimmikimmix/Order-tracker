@@ -4,7 +4,7 @@ import datetime
 import re
 import sqlite3
 
-from . import config, db
+from . import config, db, geo, pcb, prefs
 
 ORDER_FIELDS = (
     "order_no", "company_id", "po_number", "description", "status", "value",
@@ -103,12 +103,12 @@ def alerts_for(row, doc_kinds=()) -> list[str]:
         days = (promise - today()).days
         if days < 0:
             flags.append("OVERDUE")
-        elif days <= config.DUE_SOON_DAYS:
+        elif days <= int(prefs.get('due_soon_days')):
             flags.append("DUE SOON")
 
     updated = _parse_date(row["updated_at"])
     if updated and status != "ON HOLD":
-        if (today() - updated).days >= config.STALLED_DAYS:
+        if (today() - updated).days >= int(prefs.get('stalled_days')):
             flags.append("STALLED")
 
     required_from = stage_index(config.PO_REQUIRED_FROM)
@@ -206,6 +206,7 @@ def get_order(order_id: int) -> dict | None:
         return None
 
     item = _decorate([row], conn)[0]
+    item["spec"] = get_spec(order_id)
     item["history"] = [
         dict(h) for h in conn.execute(
             """SELECT * FROM status_history WHERE order_id = ?
@@ -294,6 +295,9 @@ def create_order(data: dict, actor: str = "") -> int:
             (order_id, status, actor or None, stamp),
         )
         db.reindex_order(conn, order_id)
+        db.touch(conn)
+    if data.get("spec"):
+        save_spec(order_id, data["spec"])
     return order_id
 
 
@@ -364,6 +368,7 @@ def update_order(order_id: int, data: dict, actor: str = "", note: str = "") -> 
                  actor or None, stamp),
             )
         db.reindex_order(conn, order_id)
+        db.touch(conn)
 
 
 def delete_order(order_id: int) -> None:
@@ -386,6 +391,7 @@ def delete_order(order_id: int) -> None:
         conn.execute("DELETE FROM orders_fts WHERE order_id = ?", (order_id,))
         for did in doc_ids:
             conn.execute("DELETE FROM documents_fts WHERE doc_id = ?", (did,))
+        db.touch(conn)
     for name in stored:
         documents.remove_file(name)
 
@@ -421,8 +427,10 @@ def list_companies() -> list[dict]:
 
 def save_company(data: dict) -> int:
     conn = db.connect()
+    data = _with_location(dict(data))
     company_id = data.get("id")
-    fields = ("name", "code", "contact_name", "contact_email", "phone", "notes")
+    fields = ("name", "code", "contact_name", "contact_email", "phone", "notes",
+              "country", "city", "lat", "lon", "timezone")
     with conn:
         if company_id:
             sets = [f"{f} = ?" for f in fields if f in data]
@@ -431,18 +439,22 @@ def save_company(data: dict) -> int:
                     f"UPDATE companies SET {', '.join(sets)} WHERE id = ?",
                     [*(data[f] for f in fields if f in data), company_id],
                 )
+                db.touch(conn)
             return int(company_id)
         name = (data.get("name") or "").strip()
         if not name:
             raise OrderError("A company name is required.")
         cur = conn.execute(
             """INSERT INTO companies(name, code, contact_name, contact_email,
-                                     phone, notes, created_at)
-               VALUES (?,?,?,?,?,?,?)""",
+                                     phone, notes, country, city, lat, lon,
+                                     timezone, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (name, data.get("code"), data.get("contact_name"),
              data.get("contact_email"), data.get("phone"), data.get("notes"),
-             db.now()),
+             data.get("country"), data.get("city"), data.get("lat"),
+             data.get("lon"), data.get("timezone"), db.now()),
         )
+        db.touch(conn)
         return cur.lastrowid
 
 
@@ -570,3 +582,156 @@ def dashboard() -> dict:
                            o["days_to_promise"] if o["days_to_promise"] is not None else 999),
         )[:15],
     }
+
+
+# --- Customer locations ----------------------------------------------------
+
+def _as_coord(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _with_location(data: dict) -> dict:
+    """Fill in position and time zone from the country, unless given."""
+    country = (data.get("country") or "").strip().upper() or None
+    if country:
+        data["country"] = country
+    if data.get("lat") in (None, "") or data.get("lon") in (None, ""):
+        found = geo.locate(country, data.get("city"))
+        if found:
+            if not (data.get("city") or "").strip():
+                data["city"] = found["city"]
+            data["lat"] = found["lat"]
+            data["lon"] = found["lon"]
+            if not (data.get("timezone") or "").strip():
+                data["timezone"] = found["timezone"]
+    data["lat"] = _as_coord(data.get("lat"))
+    data["lon"] = _as_coord(data.get("lon"))
+    return data
+
+
+def map_points() -> dict:
+    """Customers that can be drawn on the world map, with their workload."""
+    points = []
+    for company in list_companies():
+        lat, lon = _as_coord(company.get("lat")), _as_coord(company.get("lon"))
+        if lat is None or lon is None:
+            found = geo.locate(company.get("country"), company.get("city"))
+            if not found:
+                continue
+            lat, lon = found["lat"], found["lon"]
+            company = {**company, "timezone": company.get("timezone")
+                       or found["timezone"], "city": company.get("city")
+                       or found["city"]}
+        points.append({
+            "id": company["id"],
+            "name": company["name"],
+            "code": company.get("code") or "",
+            "country": company.get("country") or "",
+            "country_name": geo.country_name(company.get("country")),
+            "city": company.get("city") or "",
+            "lat": lat,
+            "lon": lon,
+            "timezone": company.get("timezone") or "UTC",
+            "open": company.get("open_count") or 0,
+            "value": company.get("open_value") or 0,
+        })
+
+    alerting = {}
+    for order in list_orders(include_closed=False, limit=5000):
+        if order["alerts"]:
+            alerting[order["company"]] = alerting.get(order["company"], 0) + 1
+    for point in points:
+        point["alerts"] = alerting.get(point["name"], 0)
+
+    home = geo.locate(prefs.get("home_country")) or geo.locate("KR")
+    return {"points": sorted(points, key=lambda p: p["lon"]), "home": home,
+            "unplaced": [c["name"] for c in list_companies()
+                         if _as_coord(c.get("lat")) is None
+                         and not geo.locate(c.get("country"), c.get("city"))]}
+
+
+# --- Build specification and cost sheet ------------------------------------
+
+def get_spec(order_id: int) -> dict:
+    """The spec as stored, plus everything worked out from it."""
+    conn = db.connect()
+    row = conn.execute(
+        "SELECT * FROM order_specs WHERE order_id = ?", (order_id,)
+    ).fetchone()
+    stored = {k: row[k] for k in row.keys()} if row else {}
+    settings = prefs.load()
+    spec = {name: stored.get(name) for name in pcb.FIELD_NAMES}
+    return {
+        "has_spec": bool(row),
+        "updated_at": stored.get("updated_at"),
+        "values": spec,
+        "derived": pcb.derive(spec, settings),
+        "cost": pcb.cost_sheet(spec, settings),
+    }
+
+
+def save_spec(order_id: int, data: dict) -> dict:
+    """Write the spec for one order, creating the row on first use."""
+    conn = db.connect()
+    if conn.execute("SELECT 1 FROM orders WHERE id = ?", (order_id,)).fetchone() is None:
+        raise OrderError("That order no longer exists.")
+
+    values = pcb.clean(data or {})
+    if not values:
+        return get_spec(order_id)
+
+    settings = prefs.load()
+    # A quote keeps the rates it was priced at, so re-opening it later still
+    # shows the figure the customer was given.
+    for field, source in (("fx_rate", "fx_rate"),
+                          ("inflation_rate", "inflation_rate"),
+                          ("markup_pct", "markup_pct"),
+                          ("stencil_unit_krw", "stencil_unit_krw")):
+        if values.get(field) is None:
+            existing = conn.execute(
+                f"SELECT {field} FROM order_specs WHERE order_id = ?", (order_id,)
+            ).fetchone()
+            if existing and existing[field] is not None:
+                values[field] = existing[field]
+            else:
+                values[field] = pcb.as_number(settings[source])
+
+    stamp = db.now()
+    columns = list(values)
+    with conn:
+        conn.execute(
+            "INSERT INTO order_specs(order_id, updated_at) VALUES (?, ?) "
+            "ON CONFLICT(order_id) DO NOTHING",
+            (order_id, stamp),
+        )
+        conn.execute(
+            f"UPDATE order_specs SET {', '.join(f'{c} = ?' for c in columns)}, "
+            "updated_at = ? WHERE order_id = ?",
+            [*(values[c] for c in columns), stamp, order_id],
+        )
+        db.touch(conn)
+    return get_spec(order_id)
+
+
+def reorder_sources(company_id=None, limit: int = 40) -> list[dict]:
+    """Earlier orders whose specification can be copied into a new one."""
+    conn = db.connect()
+    where, params = ["s.order_id IS NOT NULL"], []
+    if company_id:
+        where.append("o.company_id = ?")
+        params.append(int(company_id))
+    rows = conn.execute(
+        f"""SELECT o.id, o.order_no, o.description, o.order_date, c.name AS company,
+                   s.product_type, s.layers, s.qty, s.lots, s.quote_ref,
+                   s.pcb_total_krw, s.updated_at
+            FROM order_specs s
+            JOIN orders o ON o.id = s.order_id
+            JOIN companies c ON c.id = o.company_id
+            WHERE {' AND '.join(where)}
+            ORDER BY s.updated_at DESC LIMIT ?""",
+        (*params, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]

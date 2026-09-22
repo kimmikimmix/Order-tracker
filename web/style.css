@@ -223,17 +223,18 @@ select:focus, input:focus, textarea:focus { border-color: var(--amber-dim); }
 label.f { display: flex; align-items: center; gap: 4px;
           font-size: 10px; letter-spacing: .5px; color: var(--dim); }
 
-button.btn {
+button.btn, a.btn {
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
   font-family: var(--mono); font-size: 11px; padding: 3px 10px; height: 23px;
   cursor: pointer; border-radius: 2px; letter-spacing: .5px;
 }
-button.btn:hover { background: #22252b; border-color: #3a3e47; }
-button.btn.primary { border-color: var(--amber-dim); color: var(--amber); }
+button.btn:hover, a.btn:hover { background: #22252b; border-color: #3a3e47; }
+button.btn.primary, a.btn.primary { border-color: var(--amber-dim); color: var(--amber); }
 button.btn.primary:hover { background: #241a08; }
 button.btn.danger { color: var(--red); border-color: #4a1f1f; }
 button.btn.danger:hover { background: #200c0c; }
 button.btn:disabled { opacity: .4; cursor: not-allowed; }
+a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 
 .toggle { display: flex; align-items: center; gap: 4px; font-size: 10px;
           color: var(--dim); cursor: pointer; }
@@ -243,6 +244,9 @@ button.btn:disabled { opacity: .4; cursor: not-allowed; }
 #detail {
   position: fixed; top: 68px; right: 0; bottom: 22px; width: 620px;
   max-width: 96vw;
+  /* The specification needs two columns of fields to stay readable, so the
+     panel widens when one is on screen. */
+  transition: width .18s ease;
   background: var(--panel); border-left: 1px solid var(--line);
   box-shadow: -18px 0 40px rgba(0,0,0,.55);
   display: flex; flex-direction: column; z-index: 40;
@@ -459,3 +463,187 @@ pre.textdump { white-space: pre-wrap; font-size: 11px; color: var(--text);
 #stopped .splashhello { color: var(--dim); }
 #stopped .splashmark { filter: grayscale(.7); opacity: .6; box-shadow: none; }
 #stopped .splashhint { max-width: 330px; line-height: 1.7; }
+
+/* ======================================================================
+   The world map
+   ====================================================================== */
+
+.mapwrap { border: 1px solid var(--line); background: var(--panel);
+           margin-bottom: 14px; }
+
+.maphead { display: flex; align-items: center; gap: 14px; padding: 6px 10px;
+           border-bottom: 1px solid var(--line); background: var(--panel-2); }
+.maphead .mtitle { color: var(--amber); letter-spacing: 1.4px; font-size: 11px; }
+.maphead .mlegend { color: var(--dim); font-size: 10px; letter-spacing: .4px;
+                    display: flex; align-items: center; gap: 5px; }
+.maphead .mlegend i { width: 9px; height: 9px; display: inline-block;
+                      margin-left: 8px; border-radius: 50%; }
+.mlegend .lg-day   { background: #1c2733; border: 1px solid #2c3b4c; }
+.mlegend .lg-night { background: #05070b; border: 1px solid #1b1f28; }
+.mlegend .lg-pin   { background: var(--cyan); }
+.mlegend .lg-alert { background: var(--red); }
+.maphead .mutc { margin-left: auto; color: var(--dim); font-size: 10.5px; }
+
+#worldmap { display: block; width: 100%; height: auto; max-height: 46vh;
+            background: #0b131d; }
+
+/* The daylit side is the lighter one; night is painted over the top, so the
+   sea has to start light enough for the difference to show. */
+#worldmap .ocean   { fill: #0e1a27; }
+#worldmap .land    { fill: #1d2c3b; stroke: #3d5670; stroke-width: .5;
+                     stroke-linejoin: round; }
+#worldmap .grat    { stroke: #17242f; stroke-width: .5; }
+#worldmap .equator { stroke: #233444; stroke-width: .7;
+                     stroke-dasharray: 4 5; }
+
+#worldmap .night    { fill: #00060c; opacity: .66; pointer-events: none; }
+#worldmap .termline { fill: none; stroke: var(--cyan); stroke-width: 1.1;
+                      opacity: .85; filter: drop-shadow(0 0 3px var(--cyan)); }
+
+#worldmap .sunhalo { fill: var(--amber); opacity: .13; }
+#worldmap .sundisc { fill: #ffd27a; stroke: var(--amber); stroke-width: 1; }
+#worldmap .ray     { stroke: var(--amber); stroke-width: 1; opacity: .8; }
+#worldmap .moonhalo { fill: #9fb6d8; opacity: .10; }
+#worldmap .moondisc { fill: #e8eefb; }
+#worldmap .moonring { fill: none; stroke: #7e93b5; stroke-width: .8;
+                      opacity: .7; }
+
+#worldmap .pin { cursor: pointer; }
+#worldmap .pin .dot  { fill: var(--cyan); stroke: #061014; stroke-width: 1; }
+#worldmap .pin .halo { fill: var(--cyan); opacity: .14; }
+#worldmap .pin.idle .dot  { fill: var(--dim); }
+#worldmap .pin.idle .halo { opacity: .06; fill: var(--dim); }
+#worldmap .pin.alert .dot  { fill: var(--red); }
+#worldmap .pin.alert .halo { fill: var(--red); opacity: .2;
+                             animation: ping 2.2s ease-out infinite; }
+#worldmap .pin:hover .dot { fill: #fff; }
+
+@keyframes ping {
+  0%   { opacity: .28; transform: scale(.7); }
+  70%  { opacity: 0;   transform: scale(1.6); }
+  100% { opacity: 0;   transform: scale(1.6); }
+}
+
+/* ---------- the clock strip under the map ---------- */
+
+.clocks { display: flex; flex-wrap: wrap; gap: 1px; padding: 1px;
+          background: var(--line-soft); border-top: 1px solid var(--line); }
+.wclock { flex: 1 1 128px; background: var(--panel); padding: 6px 9px;
+          border-left: 2px solid var(--dimmer); }
+.wclock.open  { border-left-color: var(--green); }
+.wclock.edge  { border-left-color: var(--amber); }
+.wclock.night { border-left-color: #2b3038; }
+.wclock .wtime  { font-size: 17px; letter-spacing: 1px; color: var(--text); }
+.wclock.open .wtime { color: var(--green); }
+.wclock.night .wtime { color: var(--dim); }
+.wclock .wplace { font-size: 10.5px; color: var(--text); white-space: nowrap;
+                  overflow: hidden; text-overflow: ellipsis; }
+.wclock .wmeta  { font-size: 9.5px; color: var(--dimmer); letter-spacing: .4px;
+                  display: flex; gap: 6px; }
+.wclock .wopen  { color: var(--blue); }
+.wclock .walert { color: var(--red); }
+.mapnote { padding: 5px 10px; color: var(--dim); font-size: 10.5px; }
+
+td.ltime.open  { color: var(--green); }
+td.ltime.edge  { color: var(--amber); }
+td.ltime.night { color: var(--dimmer); }
+
+/* ======================================================================
+   Specification and cost forms
+   ====================================================================== */
+
+.dtabs, .mtabs { display: flex; gap: 2px; align-items: center;
+                 border-bottom: 1px solid var(--line); margin-bottom: 12px;
+                 padding-bottom: 0; }
+.dtabs button, .mtabs button[data-mtab] {
+  background: transparent; border: none; border-bottom: 2px solid transparent;
+  color: var(--dim); font: inherit; font-size: 11px; letter-spacing: 1px;
+  padding: 6px 12px; cursor: pointer;
+}
+.dtabs button:hover, .mtabs button[data-mtab]:hover { color: var(--text); }
+.dtabs button.active, .mtabs button[data-mtab].active {
+  color: var(--amber); border-bottom-color: var(--amber);
+}
+.dtabs .btn, .mtabs .btn { margin-bottom: 4px; }
+
+.specsect { margin-bottom: 16px; }
+.specsect h3 { font-size: 10px; letter-spacing: 1.4px; color: var(--amber);
+               margin: 0 0 7px; font-weight: 600;
+               border-bottom: 1px solid var(--line-soft); padding-bottom: 4px;
+               display: flex; align-items: center; gap: 10px; }
+.specsect h3 .note { font-weight: 400; letter-spacing: 0; }
+
+.specgrid { display: grid; grid-template-columns: 150px 1fr 150px 1fr;
+            gap: 5px 10px; align-items: center; }
+.specgrid .lbl { color: var(--dim); font-size: 10px; letter-spacing: .6px;
+                 text-align: right; }
+.specgrid .lbl.chk { text-align: left; display: flex; align-items: center;
+                     gap: 6px; color: var(--text); cursor: pointer; }
+.specgrid .fld { display: flex; align-items: center; gap: 6px; }
+.specgrid .fld input, .specgrid .fld select { width: 100%; }
+.fhint { display: block; color: var(--dimmer); font-size: 9px;
+         font-style: normal; letter-spacing: .2px; }
+.specgrid .fld .fhint { display: inline; white-space: nowrap; }
+.chk.inline { display: inline-flex; align-items: center; gap: 6px;
+              cursor: pointer; }
+
+.turnkeyonly { transition: opacity .15s; }
+.turnkeyonly.off { opacity: .32; pointer-events: none; }
+
+table.calc td { padding: 4px 8px; }
+table.calc td.ck { color: var(--dim); width: 160px; font-size: 10px;
+                   letter-spacing: .6px; white-space: nowrap; }
+table.calc td.path { color: var(--cyan); word-break: break-all; }
+table.calc i { color: var(--dimmer); font-style: normal; }
+
+table.costtable td, table.costtable th { padding: 5px 8px; }
+table.costtable tfoot td { border-top: 2px solid var(--amber-dim);
+                           color: var(--amber); font-size: 13px; }
+table.costtable tfoot .num { font-weight: 600; }
+table.pick tr { cursor: pointer; }
+table.pick tr:hover td { background: var(--panel-2); }
+
+#detail.wide { width: 1000px; }
+
+.mpane { max-height: 58vh; overflow-y: auto; padding-right: 6px; }
+
+/* ======================================================================
+   Settings page
+   ====================================================================== */
+
+.setupcols { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+             gap: 12px; align-items: start; }
+.setupcols .card { border: 1px solid var(--line); background: var(--panel);
+                   padding: 10px 12px 12px; }
+.setupcols .card.wide2 { grid-column: 1 / -1; }
+.setupcols .card .sect { margin-top: 0; }
+.listcols { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+            gap: 12px; }
+.listcols textarea { width: 100%; font-family: var(--mono); font-size: 11px; }
+.listcols .lbl { color: var(--dim); font-size: 10px; letter-spacing: .6px;
+                 margin-bottom: 4px; }
+.setupbar { position: sticky; bottom: 0; background: var(--panel-2);
+            border-top: 1px solid var(--line); margin-top: 14px; }
+.card code { color: var(--cyan); background: var(--panel-2); padding: 1px 4px; }
+
+#saved { color: var(--dim); font-size: 10.5px; }
+#saved b { color: var(--text); font-weight: 400; }
+
+/* Settings cards are narrow, so their forms drop to one field per row
+   rather than squeezing four columns into 340 pixels. */
+.setupcols .card .formgrid { grid-template-columns: 150px 1fr; gap: 6px 10px; }
+.setupcols .card .formgrid .wide { grid-column: 2 / span 1; }
+.setupcols .card .formgrid .lbl { text-align: right; align-self: center; }
+.setupcols .card .formgrid .lbl.chk { text-align: left; display: flex;
+                                      align-items: center; gap: 6px;
+                                      grid-column: 1 / span 2; color: var(--text); }
+.setupcols .card .formgrid .lbl.chk + div { display: none; }
+.setupcols .card .formgrid > div { min-width: 0; }
+.setupcols .card .formgrid input { min-width: 70px; }
+.setupcols .card table.calc td { white-space: normal; word-break: break-word; }
+.setupcols .card table.calc td.ck { white-space: normal; }
+
+/* Form inputs stretch to fill their cell; a tick box must not. */
+.formgrid input[type="checkbox"],
+.specgrid input[type="checkbox"],
+.chk input[type="checkbox"] { width: auto; flex: none; margin: 0; }

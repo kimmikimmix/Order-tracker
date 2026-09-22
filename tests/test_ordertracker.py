@@ -1,5 +1,6 @@
 """Tests for Order Tracker. Run with: python3 -m unittest discover tests"""
 
+import datetime
 import json
 import os
 import shutil
@@ -24,8 +25,9 @@ config.DOCS_DIR = _TMP / "documents"
 config.DB_PATH = _TMP / "test.db"
 
 import fixtures  # noqa: E402
-from ordertracker import (db, documents, importer, multipart,  # noqa: E402
-                          orders, sampledata)
+from ordertracker import (backup, db, documents, geo, importer,  # noqa: E402
+                          multipart, orders, pcb, prefs, printsheet,
+                          sampledata)
 from ordertracker.extract import extract_text  # noqa: E402
 
 
@@ -38,9 +40,11 @@ def fresh_db():
     db.init_db()
     conn = db.connect()
     with conn:
-        for table in ("status_history", "documents", "orders", "companies",
-                      "orders_fts", "documents_fts"):
+        for table in ("status_history", "documents", "order_specs", "orders",
+                      "companies", "orders_fts", "documents_fts"):
             conn.execute(f"DELETE FROM {table}")
+        conn.execute("DELETE FROM meta WHERE key = 'prefs'")
+    prefs.forget_cache()
     for stored in config.DOCS_DIR.glob("*"):
         stored.unlink()
 
@@ -1040,3 +1044,566 @@ class TestDemoData(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# ------------------------------------------------------- PCB specifications
+
+class TestPcbCalculations(unittest.TestCase):
+
+    def test_copper_weight_converts_to_microns_and_millimetres(self):
+        one_ounce = pcb.copper(1)
+        self.assertAlmostEqual(one_ounce["um"], 34.79, places=2)
+        self.assertAlmostEqual(one_ounce["mm"], 0.0348, places=4)
+        # Two ounces is twice as thick, and half an ounce half as thick.
+        self.assertAlmostEqual(pcb.copper(2)["um"], 69.58, places=2)
+        self.assertAlmostEqual(pcb.copper(0.5)["um"], 17.40, places=1)
+        self.assertIsNone(pcb.copper(None))
+
+    def test_thickness_tolerance_becomes_a_millimetre_range(self):
+        derived = pcb.derive({"thickness_mm": 1.6, "thickness_tol_pct": 10})
+        self.assertAlmostEqual(derived["thickness_tol_mm"], 0.16)
+        self.assertAlmostEqual(derived["thickness_min_mm"], 1.44)
+        self.assertAlmostEqual(derived["thickness_max_mm"], 1.76)
+
+    def test_panel_yield_counts_arrays_both_ways_round(self):
+        # AJ(6) is 532 x 607; with a 10 mm margin the usable area is 512 x 587.
+        # A 210 x 170 array fits 2 x 3 one way and 3 x 2 the other: six either way.
+        derived = pcb.derive({
+            "panel_code": "AJ(6)", "array_x_mm": 210, "array_y_mm": 170,
+            "ups": 4, "qty": 2000, "lots": 1,
+        })
+        self.assertEqual(derived["arrays_per_panel"], 6)
+        self.assertEqual(derived["pcs_per_panel"], 24)
+        self.assertEqual(derived["panels_needed"], 84)     # 2000 / 24, rounded up
+        self.assertAlmostEqual(derived["panel_use_pct"], 66.3, places=1)
+
+    def test_a_long_thin_array_is_turned_to_fit_more_on(self):
+        # J(4) is 507 x 607, so 487 x 587 of it is usable. A 570 x 100 array
+        # is too long to lie across the panel but fits four times up it.
+        derived = pcb.derive({"panel_code": "J(4)", "array_x_mm": 570,
+                              "array_y_mm": 100, "ups": 1})
+        self.assertEqual(derived["arrays_per_panel"], 4)
+
+    def test_lots_multiply_the_quantity(self):
+        derived = pcb.derive({"qty": 500, "lots": 4})
+        self.assertEqual(derived["total_qty"], 2000)
+        self.assertEqual(pcb.derive({"qty": 500})["total_qty"], 500)
+
+    def test_a_total_is_worked_out_from_the_piece_price_and_back_again(self):
+        from_unit = pcb.cost_sheet({"qty": 1000, "pcb_unit_krw": 1200})
+        self.assertEqual(from_unit["entered"]["pcb_total_krw"], 1200000)
+        from_total = pcb.cost_sheet({"qty": 1000, "pcb_total_krw": 1200000})
+        self.assertEqual(from_total["entered"]["pcb_unit_krw"], 1200)
+
+    def test_inflation_and_markup_apply_to_every_total(self):
+        sheet = pcb.cost_sheet({
+            "qty": 100, "pcb_total_krw": 1000000,
+            "inflation_on": 1, "inflation_rate": 1.25,
+            "markup_on": 1, "markup_pct": 20, "fx_rate": 1000,
+        })
+        section = sheet["sections"][0]
+        self.assertEqual(section["base_krw"], 1000000)
+        self.assertEqual(section["inflated_krw"], 1250000)
+        self.assertEqual(section["quoted_krw"], 1500000)     # 1.25 then +20%
+        self.assertEqual(section["quoted_usd"], 1500.0)
+        self.assertEqual(section["unit_usd"], 15.0)
+
+    def test_rates_left_off_change_nothing(self):
+        sheet = pcb.cost_sheet({"qty": 10, "pcb_total_krw": 100000,
+                                "fx_rate": 1000})
+        self.assertEqual(sheet["total"]["quoted_krw"], 100000)
+
+    def test_two_stencils_are_added_to_the_smt_total(self):
+        sheet = pcb.cost_sheet({
+            "qty": 1000, "turnkey": 1, "smt_unit_krw": 500,
+            "stencil_count": 2, "stencil_unit_krw": 140000, "fx_rate": 1000,
+        })
+        smt = next(s for s in sheet["sections"] if s["label"] == "SMT ASSEMBLY")
+        self.assertEqual(smt["base_krw"], 500 * 1000 + 2 * 140000)
+        self.assertIn("2 stencils", smt["note"])
+
+    def test_without_turnkey_only_the_boards_are_charged(self):
+        sheet = pcb.cost_sheet({
+            "qty": 100, "pcb_total_krw": 50000, "turnkey": 0,
+            "smt_total_krw": 999999, "parts_total_krw": 999999,
+            "stencil_count": 2, "fx_rate": 1000,
+        })
+        self.assertEqual([s["label"] for s in sheet["sections"]],
+                         ["PCB MANUFACTURING"])
+        self.assertEqual(sheet["total"]["base_krw"], 50000)
+
+    def test_the_grand_total_is_the_three_parts_added_up(self):
+        sheet = pcb.cost_sheet({
+            "qty": 100, "turnkey": 1, "pcb_total_krw": 100000,
+            "smt_total_krw": 60000, "stencil_count": 1,
+            "stencil_unit_krw": 130000, "parts_total_krw": 200000,
+            "fx_rate": 1000,
+        })
+        self.assertEqual(sheet["total"]["base_krw"],
+                         100000 + 60000 + 130000 + 200000)
+
+    def test_prices_typed_with_commas_and_symbols_are_understood(self):
+        cleaned = pcb.clean({"pcb_total_krw": "1,250,000", "qty": "2,000",
+                             "impedance": "yes", "layers": "6"})
+        self.assertEqual(cleaned["pcb_total_krw"], 1250000.0)
+        self.assertEqual(cleaned["qty"], 2000)
+        self.assertEqual(cleaned["impedance"], 1)
+        self.assertEqual(cleaned["layers"], 6)
+
+    def test_a_blank_spec_is_recognised_as_blank(self):
+        self.assertTrue(pcb.is_empty(pcb.clean({"quote_ref": "", "layers": ""})))
+        self.assertFalse(pcb.is_empty(pcb.clean({"layers": "4"})))
+
+
+class TestSpecStorage(unittest.TestCase):
+
+    def setUp(self):
+        fresh_db()
+        self.order_id = orders.create_order(
+            {"order_no": "SO-1", "company": "Hanwoo Electronics",
+             "status": "QUOTE"})
+
+    def test_every_spec_field_has_a_column_to_live_in(self):
+        """The form, the maths and the table must agree on the field list."""
+        columns = {row["name"] for row in
+                   db.connect().execute("PRAGMA table_info(order_specs)")}
+        missing = [name for name in pcb.FIELD_NAMES if name not in columns]
+        self.assertEqual(missing, [], f"order_specs is missing {missing}")
+
+    def test_a_spec_survives_a_round_trip(self):
+        orders.save_spec(self.order_id, {
+            "product_type": "FLEX-RIGID", "layers": "8", "qty": "1500",
+            "panel_code": "R(6)", "impedance": "1", "copper_outer_oz": "2",
+            "pcb_unit_krw": "2400", "markup_on": "1", "markup_pct": "25",
+        })
+        spec = orders.get_spec(self.order_id)
+        self.assertTrue(spec["has_spec"])
+        self.assertEqual(spec["values"]["product_type"], "FLEX-RIGID")
+        self.assertEqual(spec["values"]["layers"], 8)
+        self.assertEqual(spec["values"]["impedance"], 1)
+        self.assertAlmostEqual(spec["derived"]["copper_outer"]["um"], 69.58, 2)
+        self.assertEqual(spec["cost"]["total"]["base_krw"], 2400 * 1500)
+
+    def test_an_order_with_no_spec_still_answers(self):
+        spec = orders.get_spec(self.order_id)
+        self.assertFalse(spec["has_spec"])
+        self.assertIsNone(spec["values"]["layers"])
+        self.assertEqual(spec["cost"]["total"]["base_krw"], 0)
+
+    def test_saving_twice_updates_rather_than_duplicates(self):
+        orders.save_spec(self.order_id, {"layers": "4"})
+        orders.save_spec(self.order_id, {"layers": "6"})
+        rows = db.connect().execute(
+            "SELECT COUNT(*) AS n FROM order_specs WHERE order_id = ?",
+            (self.order_id,)).fetchone()["n"]
+        self.assertEqual(rows, 1)
+        self.assertEqual(orders.get_spec(self.order_id)["values"]["layers"], 6)
+
+    def test_a_quote_keeps_the_rates_it_was_priced_at(self):
+        prefs.save({"fx_rate": 1050})
+        orders.save_spec(self.order_id, {"pcb_total_krw": "1050000"})
+        self.assertEqual(orders.get_spec(self.order_id)["cost"]["fx_rate"], 1050)
+
+        prefs.save({"fx_rate": 1400})          # the rate moves later on
+        again = orders.get_spec(self.order_id)
+        self.assertEqual(again["cost"]["fx_rate"], 1050,
+                         "an old quote must not be repriced behind your back")
+        self.assertEqual(again["cost"]["total"]["quoted_usd"], 1000.0)
+
+    def test_a_new_order_can_carry_its_spec_with_it(self):
+        order_id = orders.create_order({
+            "order_no": "SO-2", "company": "Hanwoo Electronics",
+            "spec": {"layers": "12", "qty": "800", "pcb_unit_krw": "5000"},
+        })
+        spec = orders.get_spec(order_id)
+        self.assertEqual(spec["values"]["layers"], 12)
+        self.assertEqual(spec["cost"]["total"]["base_krw"], 4000000)
+
+    def test_deleting_an_order_takes_its_spec_with_it(self):
+        orders.save_spec(self.order_id, {"layers": "4"})
+        orders.delete_order(self.order_id)
+        left = db.connect().execute(
+            "SELECT COUNT(*) AS n FROM order_specs").fetchone()["n"]
+        self.assertEqual(left, 0)
+
+    def test_earlier_orders_are_offered_for_a_repeat(self):
+        orders.save_spec(self.order_id, {"layers": "4", "quote_ref": "Q-1"})
+        other = orders.create_order({"order_no": "SO-3", "company": "Acme Ltd"})
+        orders.save_spec(other, {"layers": "6"})
+
+        everyone = orders.reorder_sources()
+        self.assertEqual(len(everyone), 2)
+
+        company_id = next(c["id"] for c in orders.list_companies()
+                          if c["name"] == "Hanwoo Electronics")
+        just_theirs = orders.reorder_sources(company_id=company_id)
+        self.assertEqual([o["order_no"] for o in just_theirs], ["SO-1"])
+        self.assertEqual(just_theirs[0]["quote_ref"], "Q-1")
+
+    def test_an_order_with_no_spec_is_not_offered_for_a_repeat(self):
+        self.assertEqual(orders.reorder_sources(), [])
+
+    def test_saving_a_spec_against_a_gone_order_is_refused(self):
+        with self.assertRaises(orders.OrderError):
+            orders.save_spec(999999, {"layers": "4"})
+
+
+# ------------------------------------------------------------------- prefs
+
+class TestPrefs(unittest.TestCase):
+
+    def setUp(self):
+        fresh_db()
+
+    def test_defaults_are_used_until_something_is_saved(self):
+        self.assertEqual(prefs.get("fx_rate"), 1050.0)
+        self.assertIn("ENIG", prefs.get("surface_finishes"))
+
+    def test_saved_settings_come_back(self):
+        prefs.save({"fx_rate": "1,385", "markup_pct": "22",
+                    "surface_finishes": ["ENIG", "HARD GOLD"]})
+        prefs.forget_cache()
+        self.assertEqual(prefs.get("fx_rate"), 1385.0)
+        self.assertEqual(prefs.get("markup_pct"), 22.0)
+        self.assertEqual(prefs.get("surface_finishes"), ["ENIG", "HARD GOLD"])
+
+    def test_nonsense_is_ignored_rather_than_stored(self):
+        prefs.save({"fx_rate": "not a number", "unknown_key": "x"})
+        self.assertEqual(prefs.get("fx_rate"), 1050.0)
+        self.assertNotIn("unknown_key", prefs.load())
+
+    def test_reset_puts_everything_back(self):
+        prefs.save({"fx_rate": 1400})
+        prefs.reset()
+        self.assertEqual(prefs.get("fx_rate"), 1050.0)
+
+    def test_the_due_soon_window_follows_the_setting(self):
+        order_id = orders.create_order({
+            "order_no": "SO-DUE", "company": "Acme Ltd", "status": "CONFIRMED",
+            "promise_date": (orders.today()
+                             + datetime.timedelta(days=20)).isoformat()})
+        self.assertNotIn("DUE SOON", orders.get_order(order_id)["alerts"])
+
+        prefs.save({"due_soon_days": 30})
+        self.assertIn("DUE SOON", orders.get_order(order_id)["alerts"])
+
+    def test_a_panel_added_in_settings_can_be_quoted_against(self):
+        prefs.save({"panel_sizes": [{"code": "CUSTOM", "x": 300, "y": 200}]})
+        derived = pcb.derive({"panel_code": "CUSTOM", "array_x_mm": 100,
+                              "array_y_mm": 100, "ups": 1})
+        self.assertEqual(derived["panel"]["x"], 300)
+        self.assertEqual(derived["arrays_per_panel"], 2)   # 280 x 180 usable
+
+
+# ------------------------------------------------------- customers on a map
+
+class TestCustomerLocations(unittest.TestCase):
+
+    def setUp(self):
+        fresh_db()
+
+    def test_a_country_is_enough_to_place_a_customer(self):
+        orders.save_company({"name": "Hanwoo", "country": "KR"})
+        company = orders.list_companies()[0]
+        self.assertAlmostEqual(company["lat"], 37.57, places=1)
+        self.assertEqual(company["timezone"], "Asia/Seoul")
+        self.assertEqual(company["city"], "Seoul")
+
+    def test_a_known_city_beats_the_capital(self):
+        orders.save_company({"name": "Valley Co", "country": "US",
+                             "city": "San Jose"})
+        company = orders.list_companies()[0]
+        self.assertEqual(company["timezone"], "America/Los_Angeles")
+        self.assertLess(company["lon"], -100)
+
+    def test_a_position_typed_by_hand_is_kept(self):
+        orders.save_company({"name": "Exact Ltd", "country": "DE",
+                             "lat": 48.14, "lon": 11.58,
+                             "timezone": "Europe/Berlin"})
+        company = orders.list_companies()[0]
+        self.assertAlmostEqual(company["lat"], 48.14)
+        self.assertAlmostEqual(company["lon"], 11.58)
+
+    def test_the_map_carries_workload_and_leaves_out_the_unplaced(self):
+        orders.save_company({"name": "Placed", "country": "JP"})
+        orders.save_company({"name": "Nowhere"})
+        orders.create_order({"order_no": "SO-L", "company": "Placed",
+                             "status": "CONFIRMED", "value": 1000,
+                             "promise_date": (orders.today()
+                                              - datetime.timedelta(days=5)).isoformat()})
+        data = orders.map_points()
+        names = [p["name"] for p in data["points"]]
+        self.assertIn("Placed", names)
+        self.assertNotIn("Nowhere", names)
+        self.assertIn("Nowhere", data["unplaced"])
+
+        placed = next(p for p in data["points"] if p["name"] == "Placed")
+        self.assertEqual(placed["open"], 1)
+        self.assertEqual(placed["alerts"], 1)          # it is overdue
+        self.assertEqual(placed["timezone"], "Asia/Tokyo")
+
+    def test_changing_the_country_moves_the_customer(self):
+        company_id = orders.save_company({"name": "Movers", "country": "KR"})
+        orders.save_company({"id": company_id, "name": "Movers",
+                             "country": "BR", "city": "", "lat": "", "lon": "",
+                             "timezone": ""})
+        company = orders.list_companies()[0]
+        self.assertEqual(company["timezone"], "America/Sao_Paulo")
+        self.assertLess(company["lon"], 0)
+
+    def test_every_country_carries_a_position_and_a_zone(self):
+        for country in geo.country_list():
+            with self.subTest(country=country["code"]):
+                self.assertTrue(-90 <= country["lat"] <= 90)
+                self.assertTrue(-180 <= country["lon"] <= 180)
+                self.assertIn("/", country["timezone"])
+
+
+# ------------------------------------------------------------------ backups
+
+class TestBackups(unittest.TestCase):
+
+    def setUp(self):
+        fresh_db()
+        self.folder = Path(tempfile.mkdtemp(prefix="ot-backup-"))
+        prefs.save({"backup_dir": str(self.folder)})
+
+    def tearDown(self):
+        shutil.rmtree(self.folder, ignore_errors=True)
+
+    def test_a_backup_holds_the_very_latest_changes(self):
+        """The write-ahead log means a plain file copy can arrive empty."""
+        orders.create_order({"order_no": "SO-FRESH", "company": "Acme Ltd"})
+        report = backup.run()
+        self.assertTrue(report["ok"])
+
+        copy = sqlite3.connect(report["path"])
+        found = copy.execute("SELECT order_no FROM orders").fetchall()
+        copy.close()
+        self.assertEqual(found, [("SO-FRESH",)])
+
+    def test_documents_are_mirrored_and_not_copied_twice(self):
+        order_id = orders.create_order({"order_no": "SO-D", "company": "Acme Ltd"})
+        documents.store("spec.txt", b"impedance controlled", order_id=order_id)
+
+        first = backup.run()
+        self.assertEqual(first["documents_copied"], 1)
+        second = backup.run()
+        self.assertEqual(second["documents_copied"], 0)
+
+    def test_only_the_most_recent_copies_are_kept(self):
+        prefs.save({"backup_keep": 2})
+        root = backup.destination()
+        root.mkdir(parents=True, exist_ok=True)
+        for stamp in ("20200101-000000", "20200102-000000", "20200103-000000"):
+            (root / f"orders-{stamp}.db").write_bytes(b"old")
+        backup.run()
+        left = sorted(p.name for p in root.glob("orders-*.db"))
+        self.assertEqual(len(left), 2)
+        self.assertNotIn("orders-20200101-000000.db", left)
+
+    def test_without_a_folder_the_reason_is_explained(self):
+        prefs.save({"backup_dir": ""})
+        with self.assertRaises(backup.BackupError) as caught:
+            backup.run()
+        self.assertIn("SETUP", str(caught.exception))
+
+    def test_a_startup_backup_never_stops_the_app(self):
+        # A folder cannot be made inside a file, so this is a location that
+        # genuinely cannot be written to, whoever is running the app.
+        blocker = self.folder / "not-a-folder"
+        blocker.write_text("in the way", encoding="utf-8")
+        prefs.save({"backup_dir": str(blocker / "inside"),
+                    "backup_on_start": True})
+        report = backup.run_quietly()
+        self.assertFalse(report["ok"])
+        self.assertIn("backup folder", report["error"])
+
+    def test_the_status_says_when_things_were_last_saved(self):
+        orders.create_order({"order_no": "SO-S", "company": "Acme Ltd"})
+        status = backup.status()
+        self.assertTrue(status["saved_at"])
+        self.assertTrue(status["configured"])
+        backup.run()
+        self.assertTrue(backup.status()["last_backup_at"])
+        self.assertEqual(len(backup.status()["snapshots"]), 1)
+
+
+# ------------------------------------------------------- the printable sheet
+
+class TestPrintSheet(unittest.TestCase):
+
+    def setUp(self):
+        fresh_db()
+        self.order_id = orders.create_order({
+            "order_no": "SO-PRINT", "company": "Hanwoo Electronics",
+            "description": "6L rigid FR-4", "status": "CONFIRMED"})
+        orders.save_spec(self.order_id, {
+            "layers": "6", "qty": "1000", "thickness_mm": "1.6",
+            "thickness_tol_pct": "10", "copper_outer_oz": "1",
+            "surface_finish": "ENIG", "panel_code": "J(6)",
+            "array_x_mm": "150", "array_y_mm": "100", "ups": "2",
+            "pcb_unit_krw": "3000", "markup_on": "1", "markup_pct": "25",
+            "fx_rate": "1000",
+        })
+
+    def test_the_sheet_carries_the_spec_and_the_money(self):
+        page = printsheet.render(self.order_id)
+        self.assertIn("SO-PRINT", page)
+        self.assertIn("Hanwoo Electronics", page)
+        self.assertIn("34.8", page)                 # 1 oz in microns
+        self.assertIn("1.440", page)                # thickness lower bound
+        self.assertIn("3,750,000 KRW", page)        # 3,000,000 plus 25%
+        self.assertIn("$3,750.00", page)
+        self.assertIn("1,000 pcs", page)
+
+    def test_a_missing_order_returns_nothing(self):
+        self.assertIsNone(printsheet.render(999999))
+
+    def test_an_order_with_no_prices_says_so_instead_of_totalling_zero(self):
+        bare = orders.create_order({"order_no": "SO-BARE", "company": "Acme Ltd"})
+        page = printsheet.render(bare)
+        self.assertIn("No prices have been entered", page)
+
+    def test_customer_text_cannot_inject_markup(self):
+        orders.update_order(self.order_id,
+                            {"description": '<script>alert("x")</script>'})
+        page = printsheet.render(self.order_id)
+        self.assertNotIn("<script>", page)
+        self.assertIn("&lt;script&gt;", page)
+
+
+class TestSpecAndSettingsOverHttp(unittest.TestCase):
+    """The routes the spec form, the map and the settings page depend on."""
+
+    @classmethod
+    def setUpClass(cls):
+        fresh_db()
+        from ordertracker import server
+        cls.httpd = server.serve("127.0.0.1", 8813)
+        cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.base = "http://127.0.0.1:8813"
+        cls.order_id = orders.create_order(
+            {"order_no": "SO-HTTP", "company": "Hanwoo Electronics",
+             "status": "QUOTE"})
+        orders.save_company({"name": "Hanwoo Electronics", "country": "KR",
+                             "id": next(c["id"] for c in orders.list_companies())})
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+
+    def get(self, path):
+        with urllib.request.urlopen(self.base + path) as response:
+            return response.status, response.read()
+
+    def get_json(self, path):
+        code, body = self.get(path)
+        return code, json.loads(body)
+
+    def post(self, path, payload):
+        request = urllib.request.Request(
+            self.base + path, data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+
+    def test_the_front_end_scripts_are_served(self):
+        for path in ("/world.js", "/map.js", "/spec.js", "/setup.js"):
+            with self.subTest(path=path):
+                code, body = self.get(path)
+                self.assertEqual(code, 200)
+                self.assertGreater(len(body), 500)
+
+    def test_bootstrap_carries_what_the_spec_form_needs(self):
+        code, data = self.get_json("/api/bootstrap")
+        self.assertEqual(code, 200)
+        names = [field["name"] for field in data["spec_fields"]]
+        self.assertIn("panel_code", names)
+        self.assertIn("copper_outer_oz", names)
+        self.assertIn("fx_rate", [f["name"] for f in data["cost_fields"]])
+        self.assertIn("panel_sizes", data["prefs"])
+        self.assertTrue(data["countries"])
+
+    def test_a_spec_can_be_saved_and_read_back(self):
+        code, saved = self.post(f"/api/orders/{self.order_id}/spec",
+                                {"layers": "6", "qty": "500",
+                                 "pcb_unit_krw": "2000", "fx_rate": "1000"})
+        self.assertEqual(code, 200)
+        self.assertEqual(saved["cost"]["total"]["quoted_usd"], 1000.0)
+
+        code, read = self.get_json(f"/api/orders/{self.order_id}/spec")
+        self.assertEqual(read["values"]["layers"], 6)
+
+    def test_a_price_can_be_worked_out_without_saving_anything(self):
+        self.post(f"/api/orders/{self.order_id}/spec", {"qty": "500"})
+        code, quoted = self.post("/api/quote", {
+            "qty": "100", "pcb_unit_krw": "1000", "fx_rate": "1000",
+            "panel_code": "R(6)", "array_x_mm": "200", "array_y_mm": "150",
+            "ups": "2"})
+        self.assertEqual(code, 200)
+        self.assertEqual(quoted["cost"]["total"]["quoted_usd"], 100.0)
+        # R(6) is 454 x 404: four 200 x 150 arrays fit, two boards on each.
+        self.assertEqual(quoted["derived"]["arrays_per_panel"], 4)
+        self.assertEqual(quoted["derived"]["pcs_per_panel"], 8)
+        # Nothing was written: the saved spec still says what it said before.
+        code, read = self.get_json(f"/api/orders/{self.order_id}/spec")
+        self.assertEqual(read["values"]["qty"], 500)
+
+    def test_the_map_lists_customers_with_their_zone(self):
+        code, data = self.get_json("/api/map")
+        self.assertEqual(code, 200)
+        self.assertEqual(data["points"][0]["timezone"], "Asia/Seoul")
+
+    def test_settings_can_be_read_and_written(self):
+        code, before = self.get_json("/api/prefs")
+        self.assertEqual(code, 200)
+        self.assertIn("data", before["paths"])
+
+        code, saved = self.post("/api/prefs", {"markup_pct": "27",
+                                               "welcome": {"name": "Kim",
+                                                           "show": True}})
+        self.assertEqual(code, 200)
+        self.assertEqual(saved["prefs"]["markup_pct"], 27.0)
+        code, after = self.get_json("/api/prefs")
+        self.assertEqual(after["welcome"]["name"], "Kim")
+
+    def test_the_status_route_reports_saving_and_backup(self):
+        code, status = self.get_json("/api/status")
+        self.assertEqual(code, 200)
+        self.assertIn("saved_at", status)
+        self.assertIn("configured", status)
+
+    def test_a_backup_without_a_folder_explains_itself(self):
+        code, body = self.post("/api/backup", {"folder": ""})
+        self.assertEqual(code, 400)
+        self.assertIn("SETUP", body["error"])
+
+    def test_the_printable_sheet_is_served_as_a_page(self):
+        code, body = self.get(f"/print/order/{self.order_id}")
+        self.assertEqual(code, 200)
+        page = body.decode("utf-8")
+        self.assertIn("<!DOCTYPE html>", page)
+        self.assertIn("SO-HTTP", page)
+        self.assertIn("BUILD SPECIFICATION", page.upper())
+
+    def test_printing_an_order_that_is_gone_is_a_clean_404(self):
+        try:
+            self.get("/print/order/999999")
+            self.fail("expected a 404")
+        except urllib.error.HTTPError as exc:
+            self.assertEqual(exc.code, 404)
+
+    def test_another_site_cannot_change_the_settings(self):
+        request = urllib.request.Request(
+            self.base + "/api/prefs", data=json.dumps({"fx_rate": 1}).encode(),
+            headers={"Content-Type": "application/json",
+                     "Origin": "http://evil.example"})
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request)
+        self.assertEqual(caught.exception.code, 403)

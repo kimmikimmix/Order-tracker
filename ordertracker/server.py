@@ -15,7 +15,8 @@ import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import config, db, documents, importer, multipart, orders
+from . import (backup, config, db, documents, geo, importer, multipart,
+               orders, pcb, prefs, printsheet, settings)
 
 MAX_BODY_BYTES = config.MAX_UPLOAD_BYTES + (8 * 1024 * 1024)
 
@@ -54,9 +55,16 @@ def api_bootstrap(handler, match):
         "companies": orders.list_companies(),
         "dashboard": orders.dashboard(),
         "thresholds": {
-            "due_soon_days": config.DUE_SOON_DAYS,
-            "stalled_days": config.STALLED_DAYS,
+            "due_soon_days": int(prefs.get("due_soon_days")),
+            "stalled_days": int(prefs.get("stalled_days")),
         },
+        "prefs": prefs.load(),
+        "countries": geo.country_list(),
+        "cities": geo.city_list(),
+        "spec_fields": [{"name": n, "kind": k, "label": pcb.LABELS.get(n, n)}
+                        for n, k in pcb.SPEC_FIELDS],
+        "cost_fields": [{"name": n, "kind": k} for n, k in pcb.COST_FIELDS],
+        "saved": backup.last_saved(),
     }
 
 
@@ -331,6 +339,103 @@ def api_reindex(handler, match):
     db.rebuild_search_index()
     count = documents.reextract_all()
     return {"ok": True, "documents_reread": count}
+
+
+
+# --- API: build specification and costing -----------------------------------
+
+@route("GET", r"/api/orders/(\d+)/spec")
+def api_spec_get(handler, match):
+    return orders.get_spec(int(match.group(1)))
+
+
+@route("POST", r"/api/orders/(\d+)/spec")
+def api_spec_save(handler, match):
+    try:
+        return orders.save_spec(int(match.group(1)), handler.json_body())
+    except orders.OrderError as exc:
+        raise ApiError(str(exc)) from exc
+
+
+@route("GET", r"/api/reorder-sources")
+def api_reorder_sources(handler, match):
+    """Earlier orders whose specification can be reused for a repeat order."""
+    return {"orders": orders.reorder_sources(
+        company_id=_int_or_none(handler.query.get("company_id")))}
+
+
+@route("POST", r"/api/quote")
+def api_quote(handler, match):
+    """Price a spec without saving it, so the form can total as it is typed."""
+    data = handler.json_body()
+    spec = pcb.clean(data)
+    settings_now = prefs.load()
+    return {"derived": pcb.derive(spec, settings_now),
+            "cost": pcb.cost_sheet(spec, settings_now)}
+
+
+# --- API: the world map ----------------------------------------------------
+
+@route("GET", r"/api/map")
+def api_map(handler, match):
+    return orders.map_points()
+
+
+# --- API: settings ---------------------------------------------------------
+
+@route("GET", r"/api/prefs")
+def api_prefs(handler, match):
+    saved = settings.load()
+    return {"prefs": prefs.load(), "defaults": prefs.DEFAULTS,
+            "welcome": {"name": saved.get("welcome_name") or "",
+                        "show": bool(saved.get("show_welcome", True))},
+            "paths": {"data": str(config.DATA_DIR),
+                      "documents": str(config.DOCS_DIR),
+                      "app": str(config.BASE_DIR),
+                      "portable": config.PORTABLE,
+                      "settings_file": str(settings.settings_path())}}
+
+
+@route("POST", r"/api/prefs")
+def api_prefs_save(handler, match):
+    data = handler.json_body()
+    welcome = data.pop("welcome", None)
+    if isinstance(welcome, dict):
+        settings.save(welcome_name=str(welcome.get("name") or ""),
+                      show_welcome=bool(welcome.get("show", True)))
+    return {"ok": True, "prefs": prefs.save(data)}
+
+
+@route("POST", r"/api/prefs/reset")
+def api_prefs_reset(handler, match):
+    return {"ok": True, "prefs": prefs.reset()}
+
+
+# --- API: saving and backups -----------------------------------------------
+
+@route("GET", r"/api/status")
+def api_status(handler, match):
+    return backup.status()
+
+
+@route("POST", r"/api/backup")
+def api_backup(handler, match):
+    folder = (handler.json_body() or {}).get("folder")
+    try:
+        return backup.run(folder)
+    except backup.BackupError as exc:
+        raise ApiError(str(exc)) from exc
+
+
+# --- The printable sheet ---------------------------------------------------
+
+@route("GET", r"/print/order/(\d+)")
+def print_order(handler, match):
+    page = printsheet.render(int(match.group(1)))
+    if page is None:
+        raise ApiError("No such order.", HTTPStatus.NOT_FOUND)
+    handler.send_bytes(page.encode("utf-8"), "text/html; charset=utf-8")
+    return None
 
 
 # --- Handler ---------------------------------------------------------------

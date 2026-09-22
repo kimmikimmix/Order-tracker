@@ -82,6 +82,8 @@ const S = {
   orders: [],
   selected: 0,
   openOrder: null,
+  detailTab: 'order',
+  mapData: null,
   sort: { key: 'promise_date', dir: 'asc' },
   filters: { status: '', company_id: '', owner: '', alert: '', closed: '1' },
   importFile: null,
@@ -146,8 +148,10 @@ async function boot() {
   applyHash();
   dismissSplash();
   tickClock();
+  refreshSaved();
   setInterval(tickClock, 1000);
   setInterval(refreshQuietly, 60000);
+  setInterval(refreshSaved, 60000);
 }
 
 async function reloadBoot() {
@@ -159,6 +163,9 @@ async function refreshQuietly() {
   try {
     await reloadBoot();
     if (S.view === 'dash') renderDash();
+    // Redrawn so the customers' local times do not sit there going stale.
+    if (S.view === 'companies') renderCompanies();
+    refreshSaved();
   } catch (err) { /* the server may simply have been stopped */ }
 }
 
@@ -184,7 +191,7 @@ function renderTopStats() {
 /* The address bar mirrors where you are, so a view, a filter or a single
    order can be bookmarked or pasted to a colleague on the same machine. */
 
-const NAV_VIEWS = ['dash', 'blotter', 'companies', 'docs', 'import'];
+const NAV_VIEWS = ['dash', 'blotter', 'companies', 'docs', 'import', 'setup'];
 
 function setHash(fragment) {
   const next = '#' + fragment;
@@ -228,6 +235,8 @@ function show(view) {
   if (view === 'companies') renderCompanies();
   if (view === 'docs') renderDocs();
   if (view === 'import') renderImport();
+  if (view === 'setup') renderSetup();
+  if (view !== 'dash') MapView.stop();
 }
 
 /* ---- dashboard ---- */
@@ -248,6 +257,8 @@ function renderDash() {
   const maxStatus = Math.max(1, ...d.by_status.map(s => s.count));
 
   el.innerHTML = `
+    ${MapView.html()}
+
     <div class="tiles">
       ${tile('OPEN ORDERS', d.open_orders, `${d.total_orders} on file`, 'blue', 'open')}
       ${tile('OPEN VALUE', money(d.open_value), 'across all customers', 'green')}
@@ -316,7 +327,16 @@ function renderDash() {
       </tbody>
     </table>`;
 
+  loadMap();
+
   el.onclick = event => {
+    const pin = event.target.closest('.pin[data-company]');
+    if (pin) {
+      S.filters = { ...S.filters, company_id: pin.dataset.company,
+                    alert: '', closed: '0' };
+      show('blotter');
+      return;
+    }
     const tileNode = event.target.closest('[data-act]');
     if (tileNode) {
       const act = tileNode.dataset.act;
@@ -345,6 +365,29 @@ function renderDash() {
       }
     }
   };
+}
+
+async function loadMap() {
+  try {
+    S.mapData = await api('/api/map');
+  } catch (err) {
+    S.mapData = { points: [], unplaced: [] };
+  }
+  if (S.view === 'dash') MapView.mount(S.mapData);
+}
+
+/* Shows in the status bar, so it is always clear the work is safely stored. */
+async function refreshSaved() {
+  try {
+    const saved = await api('/api/status');
+    const stamp = saved.saved_at ? String(saved.saved_at).slice(0, 16) : 'never';
+    const backup = saved.last_backup_at
+      ? 'backed up ' + String(saved.last_backup_at).slice(0, 16)
+      : (saved.configured ? 'backup pending' : 'no backup folder set');
+    const node = $('#saved');
+    if (node) node.innerHTML =
+      `saved <b>${esc(stamp)}</b> UTC &nbsp;·&nbsp; ${esc(backup)}`;
+  } catch (err) { /* the server may simply have been stopped */ }
 }
 
 /* ---- blotter ---- */
@@ -507,14 +550,17 @@ function renderCompanies() {
     </div>
     <table class="grid">
       <thead><tr>
-        <th>CUSTOMER</th><th>CODE</th><th>CONTACT</th><th>EMAIL</th>
-        <th class="num">ORDERS</th><th class="num">OPEN</th><th class="num">OPEN VALUE</th><th></th>
+        <th>CUSTOMER</th><th>CODE</th><th>WHERE</th><th>LOCAL TIME</th>
+        <th>CONTACT</th><th>EMAIL</th><th class="num">ORDERS</th><th class="num">OPEN</th><th class="num">OPEN VALUE</th><th></th>
       </tr></thead>
       <tbody>
         ${companies.map(c => `
           <tr data-company-id="${c.id}">
             <td>${esc(c.name)}</td>
             <td style="color:var(--dim)">${esc(c.code || '')}</td>
+            <td style="color:var(--dim)">${esc([c.city, c.country].filter(Boolean).join(', ') || '—')}</td>
+            <td class="ltime ${c.timezone ? awake(c.timezone, new Date()) : ''}">
+              ${c.timezone ? esc(timeIn(c.timezone, new Date())) : '—'}</td>
             <td style="color:var(--dim)">${esc(c.contact_name || '')}</td>
             <td style="color:var(--blue)">${esc(c.contact_email || '')}</td>
             <td class="num">${c.order_count}</td>
@@ -872,6 +918,16 @@ function renderDetail() {
   panel.classList.remove('hidden');
 
   const pipelineIndex = S.boot.pipeline.indexOf(o.status);
+  const tab = S.detailTab || 'order';
+  const spec = o.spec || { values: {}, derived: {}, cost: null };
+
+  const tabs = [
+    ['order', 'ORDER'],
+    ['spec', 'SPEC'],
+    ['cost', 'COST'],
+    ['docs', `DOCS (${o.documents.length})`],
+    ['history', 'HISTORY'],
+  ];
 
   panel.innerHTML = `
     <div class="dhead">
@@ -890,87 +946,148 @@ function renderDetail() {
             ${esc(step)}
           </div>`).join('')}
       </div>
-      <div class="filterbar" style="padding-bottom:12px">
-        ${S.boot.special_statuses.map(s => `
-          <button class="btn" data-step="${esc(s)}">${esc(s)}</button>`).join('')}
+
+      <div class="dtabs">
+        ${tabs.map(([key, label]) => `
+          <button data-tab="${key}" class="${tab === key ? 'active' : ''}">${label}</button>`).join('')}
         <span class="spacer"></span>
-        <button class="btn danger" id="d-delete">DELETE ORDER</button>
+        <a class="btn" href="/print/order/${o.id}" target="_blank"
+           title="A printable specification and cost sheet">PRINT SHEET</a>
       </div>
 
-      <div class="kv">
-        <div class="k">CUSTOMER PO</div>
-        <div class="v"><input id="e-po_number" value="${esc(o.po_number || '')}"></div>
-        <div class="k">DESCRIPTION</div>
-        <div class="v"><input id="e-description" value="${esc(o.description || '')}"></div>
-        <div class="k">VALUE</div>
-        <div class="v" style="display:flex;gap:6px">
-          <input id="e-value" type="number" step="0.01" value="${o.value || 0}" style="flex:2">
-          <input id="e-currency" value="${esc(o.currency || 'USD')}" style="flex:1">
+      <div class="dpane ${tab === 'order' ? '' : 'hidden'}" id="pane-order">
+        <div class="filterbar" style="padding-bottom:12px">
+          ${S.boot.special_statuses.map(s => `
+            <button class="btn" data-step="${esc(s)}">${esc(s)}</button>`).join('')}
+          <span class="spacer"></span>
+          <button class="btn danger" id="d-delete">DELETE ORDER</button>
         </div>
-        <div class="k">ORDER DATE</div>
-        <div class="v"><input id="e-order_date" type="date" value="${esc(o.order_date || '')}"></div>
-        <div class="k">PROMISED</div>
-        <div class="v"><input id="e-promise_date" type="date" value="${esc(o.promise_date || '')}"></div>
-        <div class="k">SHIPPED</div>
-        <div class="v"><input id="e-ship_date" type="date" value="${esc(o.ship_date || '')}"></div>
-        <div class="k">OWNER</div>
-        <div class="v"><input id="e-owner" value="${esc(o.owner || '')}"></div>
-        <div class="k">PRIORITY</div>
-        <div class="v"><select id="e-priority">
-          ${['LOW', 'NORMAL', 'HIGH', 'URGENT'].map(p =>
-            `<option ${o.priority === p ? 'selected' : ''}>${p}</option>`).join('')}
-        </select></div>
-        <div class="k">NOTES</div>
-        <div class="v"><textarea id="e-notes" rows="3">${esc(o.notes || '')}</textarea></div>
+
+        <div class="kv">
+          <div class="k">CUSTOMER PO</div>
+          <div class="v"><input id="e-po_number" value="${esc(o.po_number || '')}"></div>
+          <div class="k">DESCRIPTION</div>
+          <div class="v"><input id="e-description" value="${esc(o.description || '')}"></div>
+          <div class="k">VALUE</div>
+          <div class="v" style="display:flex;gap:6px">
+            <input id="e-value" type="number" step="0.01" value="${o.value || 0}" style="flex:2">
+            <input id="e-currency" value="${esc(o.currency || 'USD')}" style="flex:1">
+          </div>
+          <div class="k">ORDER DATE</div>
+          <div class="v"><input id="e-order_date" type="date" value="${esc(o.order_date || '')}"></div>
+          <div class="k">PROMISED</div>
+          <div class="v"><input id="e-promise_date" type="date" value="${esc(o.promise_date || '')}"></div>
+          <div class="k">SHIPPED</div>
+          <div class="v"><input id="e-ship_date" type="date" value="${esc(o.ship_date || '')}"></div>
+          <div class="k">OWNER</div>
+          <div class="v"><input id="e-owner" value="${esc(o.owner || '')}"></div>
+          <div class="k">PRIORITY</div>
+          <div class="v"><select id="e-priority">
+            ${['LOW', 'NORMAL', 'HIGH', 'URGENT'].map(p =>
+              `<option ${o.priority === p ? 'selected' : ''}>${p}</option>`).join('')}
+          </select></div>
+          <div class="k">NOTES</div>
+          <div class="v"><textarea id="e-notes" rows="3">${esc(o.notes || '')}</textarea></div>
+        </div>
+
+        <div class="filterbar" style="padding:10px 0 4px">
+          <button class="btn primary" id="d-save">SAVE CHANGES</button>
+          <span class="note">contact: ${esc(o.contact_name || '—')}
+            ${o.contact_email ? `· <a href="mailto:${esc(o.contact_email)}" style="color:var(--blue)">${esc(o.contact_email)}</a>` : ''}</span>
+        </div>
       </div>
 
-      <div class="filterbar" style="padding:10px 0 4px">
-        <button class="btn primary" id="d-save">SAVE CHANGES</button>
-        <span class="note">contact: ${esc(o.contact_name || '—')}
-          ${o.contact_email ? `· <a href="mailto:${esc(o.contact_email)}" style="color:var(--blue)">${esc(o.contact_email)}</a>` : ''}</span>
+      <div class="dpane ${tab === 'spec' ? '' : 'hidden'}" id="pane-spec">
+        <div class="filterbar" style="padding:0 0 10px">
+          <button class="btn" id="d-reorder">COPY FROM PREVIOUS ORDER</button>
+          <span class="spacer"></span>
+          <span class="note">${spec.updated_at
+            ? 'spec saved ' + esc(spec.updated_at) + ' UTC' : 'no spec saved yet'}</span>
+        </div>
+        ${specFormHTML('s', spec.values)}
+        <h2 class="sect">Worked out for you</h2>
+        <div id="spec-derived"></div>
+        <div class="filterbar" style="padding:10px 0 4px">
+          <button class="btn primary" id="d-savespec">SAVE SPEC &amp; COST</button>
+        </div>
       </div>
 
-      <h2 class="sect">Documents (${o.documents.length})</h2>
-      <div class="dropzone" id="o-drop" style="margin-bottom:8px">
-        Drop files here to file them against ${esc(o.order_no)}
-        <input type="file" id="o-file" multiple class="hidden">
-      </div>
-      <div class="doclist">
-        ${o.documents.length ? o.documents.map(d => `
-          <div class="docrow">
-            <span class="chip k-${esc(d.kind || 'OTHER')}">${esc(d.kind || 'OTHER')}</span>
-            <a class="dname" href="/api/documents/${d.id}/file" target="_blank">${esc(d.filename)}</a>
-            <span class="dmeta">${bytes(d.size)}</span>
-            <span class="dmeta" title="${esc(d.extract_note || 'text indexed')}"
-                  style="color:${d.text_len ? 'var(--green)' : 'var(--dimmer)'}">
-              ${d.text_len ? 'indexed' : 'no text'}</span>
-            <button class="btn" data-text="${d.id}">TEXT</button>
-            <button class="btn danger" data-del-doc="${d.id}">DEL</button>
-          </div>`).join('')
-        : '<div class="note">Nothing filed against this order yet.</div>'}
+      <div class="dpane ${tab === 'cost' ? '' : 'hidden'}" id="pane-cost">
+        ${costFormHTML('s', spec.values)}
+        <h2 class="sect">Totals</h2>
+        <div id="spec-cost"></div>
+        <div class="filterbar" style="padding:10px 0 4px">
+          <button class="btn primary" id="d-savecost">SAVE SPEC &amp; COST</button>
+          <a class="btn" href="/print/order/${o.id}" target="_blank">PRINT SHEET</a>
+        </div>
       </div>
 
-      <h2 class="sect">History</h2>
-      <div class="timeline">
-        ${o.history.map(h => `
-          <div class="ev">
-            <div>${h.from_status && h.from_status !== h.to_status
-                    ? `<span class="chip ${cls(h.from_status)}">${esc(h.from_status)}</span> →
-                       <span class="chip ${cls(h.to_status)}">${esc(h.to_status)}</span>`
-                    : `<span class="chip ${cls(h.to_status)}">${esc(h.to_status)}</span>`}
-              ${h.note ? `<span style="color:var(--dim)"> — ${esc(h.note)}</span>` : ''}</div>
-            <div class="when">${esc(h.changed_at)}${h.changed_by ? ' · ' + esc(h.changed_by) : ''}</div>
-          </div>`).join('')}
+      <div class="dpane ${tab === 'docs' ? '' : 'hidden'}" id="pane-docs">
+        <div class="dropzone" id="o-drop" style="margin-bottom:8px">
+          Drop files here to file them against ${esc(o.order_no)}
+          <input type="file" id="o-file" multiple class="hidden">
+        </div>
+        <div class="doclist">
+          ${o.documents.length ? o.documents.map(d => `
+            <div class="docrow">
+              <span class="chip k-${esc(d.kind || 'OTHER')}">${esc(d.kind || 'OTHER')}</span>
+              <a class="dname" href="/api/documents/${d.id}/file" target="_blank">${esc(d.filename)}</a>
+              <span class="dmeta">${bytes(d.size)}</span>
+              <span class="dmeta" title="${esc(d.extract_note || 'text indexed')}"
+                    style="color:${d.text_len ? 'var(--green)' : 'var(--dimmer)'}">
+                ${d.text_len ? 'indexed' : 'no text'}</span>
+              <button class="btn" data-text="${d.id}">TEXT</button>
+              <button class="btn danger" data-del-doc="${d.id}">DEL</button>
+            </div>`).join('')
+          : '<div class="note">Nothing filed against this order yet.</div>'}
+        </div>
+      </div>
+
+      <div class="dpane ${tab === 'history' ? '' : 'hidden'}" id="pane-history">
+        <div class="timeline">
+          ${o.history.map(h => `
+            <div class="ev">
+              <div>${h.from_status && h.from_status !== h.to_status
+                      ? `<span class="chip ${cls(h.from_status)}">${esc(h.from_status)}</span> →
+                         <span class="chip ${cls(h.to_status)}">${esc(h.to_status)}</span>`
+                      : `<span class="chip ${cls(h.to_status)}">${esc(h.to_status)}</span>`}
+                ${h.note ? `<span style="color:var(--dim)"> — ${esc(h.note)}</span>` : ''}</div>
+              <div class="when">${esc(h.changed_at)}${h.changed_by ? ' · ' + esc(h.changed_by) : ''}</div>
+            </div>`).join('')}
+        </div>
       </div>
     </div>`;
 
   $('#d-close').onclick = closeDetail;
   $('#d-save').onclick = saveOrderEdits;
   $('#d-delete').onclick = deleteOpenOrder;
-
-  $$('#detail [data-step]').forEach(node => {
-    node.onclick = () => changeStatus(node.dataset.step);
+  $('#d-savespec').onclick = saveSpec;
+  $('#d-savecost').onclick = saveSpec;
+  $('#d-reorder').onclick = () => pickPreviousSpec(o.company, values => {
+    fillSpecForm('s', values);
+    refreshSpecCalc();
+    toast('Specification copied — check it, then SAVE SPEC & COST', 'ok');
   });
+
+  const wideTabs = ['spec', 'cost'];
+  panel.classList.toggle('wide', wideTabs.includes(tab));
+
+  $$('#detail .dtabs button').forEach(button => {
+    button.onclick = () => {
+      S.detailTab = button.dataset.tab;
+      $$('#detail .dtabs button').forEach(b =>
+        b.classList.toggle('active', b === button));
+      $$('#detail .dpane').forEach(pane =>
+        pane.classList.toggle('hidden', pane.id !== 'pane-' + S.detailTab));
+      panel.classList.toggle('wide', wideTabs.includes(S.detailTab));
+    };
+  });
+
+  $$('#detail .pipeline [data-step], #detail #pane-order [data-step]')
+    .forEach(node => { node.onclick = () => changeStatus(node.dataset.step); });
+
+  wireSpecForm('s', refreshSpecCalc);
+  refreshSpecCalc();
 
   wireDropzone($('#o-drop'), $('#o-file'), o.id, () => openOrder(o.id));
 
@@ -986,6 +1103,21 @@ function renderDetail() {
       reloadBoot();
     }
   };
+}
+
+function refreshSpecCalc() {
+  quoteFromForm('s', 'spec-derived', 'spec-cost');
+}
+
+async function saveSpec() {
+  const o = S.openOrder;
+  if (!o) return;
+  try {
+    await postJSON('/api/orders/' + o.id + '/spec', readSpecForm('s'));
+    toast('Specification and cost saved', 'ok');
+    await openOrder(o.id);
+    refreshSaved();
+  } catch (err) { toast(err.message, 'err'); }
 }
 
 async function changeStatus(newStatus) {
@@ -1105,45 +1237,88 @@ function closeModal() {
 function newOrderModal() {
   const today = new Date().toISOString().slice(0, 10);
   modal('NEW ORDER', `
-    <div class="formgrid">
-      <div class="lbl">ORDER NO *</div>
-      <div><input id="n-order_no" placeholder="SO-1234"></div>
-      <div class="lbl">CUSTOMER *</div>
-      <div><input id="n-company" list="companylist" placeholder="start typing…">
-        <datalist id="companylist">
-          ${S.boot.companies.map(c => `<option value="${esc(c.name)}">`).join('')}
-        </datalist></div>
+    <div class="mtabs">
+      <button data-mtab="basics" class="active">ORDER</button>
+      <button data-mtab="spec">PCB SPEC</button>
+      <button data-mtab="cost">COST</button>
+      <span class="spacer"></span>
+      <button class="btn" id="n-reorder">REPEAT A PREVIOUS ORDER</button>
+    </div>
 
-      <div class="lbl">CUSTOMER PO</div><div><input id="n-po_number"></div>
-      <div class="lbl">STATUS</div>
-      <div><select id="n-status">
-        ${S.boot.all_statuses.map(s =>
-          `<option ${s === S.boot.pipeline[1] ? 'selected' : ''}>${esc(s)}</option>`).join('')}
-      </select></div>
+    <div class="mpane" id="mpane-basics">
+      <div class="formgrid">
+        <div class="lbl">ORDER NO *</div>
+        <div><input id="n-order_no" placeholder="SO-1234"></div>
+        <div class="lbl">CUSTOMER *</div>
+        <div><input id="n-company" list="companylist" placeholder="start typing…">
+          <datalist id="companylist">
+            ${S.boot.companies.map(c => `<option value="${esc(c.name)}">`).join('')}
+          </datalist></div>
 
-      <div class="lbl">DESCRIPTION</div>
-      <div class="wide"><input id="n-description" placeholder="what was ordered"></div>
+        <div class="lbl">CUSTOMER PO</div><div><input id="n-po_number"></div>
+        <div class="lbl">STATUS</div>
+        <div><select id="n-status">
+          ${S.boot.all_statuses.map(s =>
+            `<option ${s === S.boot.pipeline[1] ? 'selected' : ''}>${esc(s)}</option>`).join('')}
+        </select></div>
 
-      <div class="lbl">VALUE</div><div><input id="n-value" type="number" step="0.01" value="0"></div>
-      <div class="lbl">CURRENCY</div><div><input id="n-currency" value="USD"></div>
+        <div class="lbl">DESCRIPTION</div>
+        <div class="wide"><input id="n-description" placeholder="what was ordered"></div>
 
-      <div class="lbl">ORDER DATE</div><div><input id="n-order_date" type="date" value="${today}"></div>
-      <div class="lbl">PROMISED</div><div><input id="n-promise_date" type="date"></div>
+        <div class="lbl">VALUE</div><div><input id="n-value" type="number" step="0.01" value="0"></div>
+        <div class="lbl">CURRENCY</div><div><input id="n-currency" value="USD"></div>
 
-      <div class="lbl">OWNER</div><div><input id="n-owner"></div>
-      <div class="lbl">PRIORITY</div>
-      <div><select id="n-priority">
-        <option>LOW</option><option selected>NORMAL</option>
-        <option>HIGH</option><option>URGENT</option>
-      </select></div>
+        <div class="lbl">ORDER DATE</div><div><input id="n-order_date" type="date" value="${today}"></div>
+        <div class="lbl">PROMISED</div><div><input id="n-promise_date" type="date"></div>
 
-      <div class="lbl">NOTES</div>
-      <div class="wide"><textarea id="n-notes" rows="2"></textarea></div>
+        <div class="lbl">OWNER</div><div><input id="n-owner"></div>
+        <div class="lbl">PRIORITY</div>
+        <div><select id="n-priority">
+          <option>LOW</option><option selected>NORMAL</option>
+          <option>HIGH</option><option>URGENT</option>
+        </select></div>
+
+        <div class="lbl">NOTES</div>
+        <div class="wide"><textarea id="n-notes" rows="2"></textarea></div>
+      </div>
+      <div class="note">The PCB SPEC and COST tabs are optional — an order can
+        be created with just the two fields marked *, and the rest filled in
+        later.</div>
+    </div>
+
+    <div class="mpane hidden" id="mpane-spec">
+      ${specFormHTML('n', null)}
+    </div>
+
+    <div class="mpane hidden" id="mpane-cost">
+      ${costFormHTML('n', null)}
+      <h2 class="sect">Totals</h2>
+      <div id="n-calc"></div>
     </div>`,
     [
       { label: 'CANCEL', action: closeModal },
       { label: 'CREATE ORDER', primary: true, action: createOrder },
     ]);
+
+  $$('#modal .mtabs [data-mtab]').forEach(button => {
+    button.onclick = () => {
+      $$('#modal .mtabs [data-mtab]').forEach(b =>
+        b.classList.toggle('active', b === button));
+      $$('#modal .mpane').forEach(pane =>
+        pane.classList.toggle('hidden', pane.id !== 'mpane-' + button.dataset.mtab));
+    };
+  });
+
+  $('#n-reorder').onclick = () =>
+    pickPreviousSpec($('#n-company') ? $('#n-company').value : '', values => {
+      newOrderModal();
+      fillSpecForm('n', values);
+      quoteFromForm('n', 'n-calc', 'n-calc');
+      toast('Specification copied. Give it an order number and a customer.', 'ok');
+    });
+
+  wireSpecForm('n', () => quoteFromForm('n', 'n-calc', 'n-calc'));
+  quoteFromForm('n', 'n-calc', 'n-calc');
 }
 
 async function createOrder() {
@@ -1158,6 +1333,7 @@ async function createOrder() {
     toast('An order number and a customer are both required.', 'err');
     return;
   }
+  body.spec = readSpecForm('n');
   try {
     const result = await postJSON('/api/orders', body);
     closeModal();
@@ -1165,6 +1341,7 @@ async function createOrder() {
     await reloadBoot();
     openOrder(result.id);
     if (S.view === 'blotter') loadBlotter();
+    refreshSaved();
   } catch (err) { toast(err.message, 'err'); }
 }
 
@@ -1177,20 +1354,42 @@ function companyModal(company) {
       <div class="lbl">CONTACT</div><div><input id="co-contact_name" value="${esc(c.contact_name || '')}"></div>
       <div class="lbl">EMAIL</div><div><input id="co-contact_email" value="${esc(c.contact_email || '')}"></div>
       <div class="lbl">PHONE</div><div><input id="co-phone" value="${esc(c.phone || '')}"></div>
+
+      <div class="lbl">COUNTRY <i class="fhint">puts them on the map</i></div>
+      <div><select id="co-country">
+        <option value="">—</option>
+        ${(S.boot.countries || []).map(country => `<option value="${esc(country.code)}"
+          ${country.code === (c.country || '') ? 'selected' : ''}>${esc(country.name)}</option>`).join('')}
+      </select></div>
+      <div class="lbl">CITY <i class="fhint">optional</i></div>
+      <div><input id="co-city" list="citylist" value="${esc(c.city || '')}">
+        <datalist id="citylist">
+          ${(S.boot.cities || []).map(city => `<option value="${esc(city.city)}">`).join('')}
+        </datalist></div>
+
       <div class="lbl">NOTES</div><div class="wide"><textarea id="co-notes" rows="2">${esc(c.notes || '')}</textarea></div>
-    </div>`,
+    </div>
+    <div class="note">Leave the position blank and it is taken from the
+      country — or the city, when it is one we know. The local time on the
+      dashboard follows from it.</div>`,
     [
       { label: 'CANCEL', action: closeModal },
       { label: 'SAVE', primary: true, action: async () => {
         const body = { id: c.id };
-        ['name', 'code', 'contact_name', 'contact_email', 'phone', 'notes']
-          .forEach(f => { body[f] = $('#co-' + f).value; });
+        ['name', 'code', 'contact_name', 'contact_email', 'phone', 'notes',
+         'country', 'city'].forEach(f => { body[f] = $('#co-' + f).value; });
+        /* Let the server place them afresh whenever the country or city
+           changes, rather than keeping a position from the old one. */
+        body.lat = '';
+        body.lon = '';
+        body.timezone = '';
         try {
           await postJSON('/api/companies', body);
           closeModal();
           toast('Customer saved', 'ok');
           await reloadBoot();
           renderCompanies();
+          loadMap();
         } catch (err) { toast(err.message, 'err'); }
       } },
     ]);
@@ -1224,7 +1423,8 @@ document.addEventListener('keydown', event => {
 
   if (event.key === '/') { event.preventDefault(); $('#cmd').focus(); return; }
 
-  const views = { '1': 'dash', '2': 'blotter', '3': 'companies', '4': 'docs', '5': 'import' };
+  const views = { '1': 'dash', '2': 'blotter', '3': 'companies', '4': 'docs',
+                  '5': 'import', '6': 'setup' };
   if (views[event.key]) { show(views[event.key]); return; }
 
   if (event.key === 'n' || event.key === 'N') { newOrderModal(); return; }

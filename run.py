@@ -5,6 +5,7 @@
     python3 run.py --demo       load sample data first, in its own database
     python3 run.py --port 9000  use a different port
     python3 run.py --reindex    re-read every stored document, then start
+    python3 run.py --no-backup  start without taking the usual backup copy
 
 Nothing here needs installing: it runs on a stock Python 3.10 or newer.
 """
@@ -57,6 +58,8 @@ def main(argv=None):
                              "(use when the app folder is locked down by "
                              "antivirus or OneDrive)")
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--no-backup", action="store_true",
+                        help="skip the startup copy to the backup folder")
     parser.add_argument("--reindex", action="store_true",
                         help="re-read the text of every stored document before starting")
     parser.add_argument("--where", action="store_true",
@@ -85,7 +88,8 @@ def main(argv=None):
         print("\n  Change it with:  py setup.py\n")
         return 0
 
-    from ordertracker import db, documents, sampledata, server
+    from ordertracker import (backup, db, documents, sampledata,
+                              server)
 
     try:
         db.init_db()
@@ -103,6 +107,13 @@ def main(argv=None):
             counts = sampledata.load()
             print(f"  {counts['orders']} orders, {counts['companies']} companies, "
                   f"{counts['documents']} documents")
+
+    if not args.no_backup:
+        report = backup.run_quietly()
+        if report and report.get("ok"):
+            print(f"  backed up to {report['path']}")
+        elif report:
+            print(f"  backup skipped: {report['error'].splitlines()[0]}")
 
     if args.reindex:
         print("  re-reading stored documents …")

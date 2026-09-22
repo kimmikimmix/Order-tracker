@@ -13,7 +13,7 @@ from . import config
 
 _local = threading.local()
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def now() -> str:
@@ -126,6 +126,78 @@ CREATE INDEX IF NOT EXISTS idx_docs_order   ON documents(order_id);
 CREATE INDEX IF NOT EXISTS idx_docs_company ON documents(company_id);
 CREATE INDEX IF NOT EXISTS idx_docs_sha     ON documents(sha256);
 
+-- The PCB build specification and cost sheet for an order. One row per
+-- order, created the moment anything on the spec form is filled in. Kept
+-- apart from orders so the blotter stays quick to read and so an order with
+-- no engineering detail costs nothing to store.
+CREATE TABLE IF NOT EXISTS order_specs (
+    order_id          INTEGER PRIMARY KEY
+                      REFERENCES orders(id) ON DELETE CASCADE,
+
+    -- quotation
+    quote_date        TEXT,
+    quote_ref         TEXT,
+    contact_person    TEXT,
+
+    -- what it is
+    product_type      TEXT,
+    ipc_class         TEXT,
+    ccl_material      TEXT,
+
+    -- size and panelisation, all in millimetres
+    pcb_x_mm          REAL,
+    pcb_y_mm          REAL,
+    array_x_mm        REAL,
+    array_y_mm        REAL,
+    ups               INTEGER,
+    panel_code        TEXT,
+
+    -- finish
+    surface_finish    TEXT,
+    finish_thickness  TEXT,
+
+    -- stack-up
+    layers            INTEGER,
+    thickness_mm      REAL,
+    thickness_tol_pct REAL,
+    copper_outer_oz   REAL,
+    copper_inner_oz   REAL,
+
+    impedance         INTEGER DEFAULT 0,
+    impedance_note    TEXT,
+
+    -- drilling
+    min_drill_mm      REAL,
+    min_drill_count   INTEGER,
+    total_drill_count INTEGER,
+    bvh               INTEGER DEFAULT 0,
+    bvh_layers        TEXT,
+
+    options           TEXT,
+    qty               INTEGER,
+    lots              INTEGER,
+
+    -- cost sheet, every figure entered in won
+    pcb_total_krw     REAL,
+    pcb_unit_krw      REAL,
+    turnkey           INTEGER DEFAULT 0,
+    smt_total_krw     REAL,
+    smt_unit_krw      REAL,
+    stencil_count     INTEGER,
+    stencil_unit_krw  REAL,
+    parts_total_krw   REAL,
+    parts_unit_krw    REAL,
+
+    -- the rates this quote was priced at, kept so an old quote still adds up
+    inflation_on      INTEGER DEFAULT 0,
+    inflation_rate    REAL,
+    markup_on         INTEGER DEFAULT 0,
+    markup_pct        REAL,
+    fx_rate           REAL,
+
+    updated_at        TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -148,16 +220,75 @@ CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
 """
 
 
+# Columns added after the first release. SQLite has no "ADD COLUMN IF NOT
+# EXISTS", so each is applied only when the table is missing it.
+LATER_COLUMNS = {
+    "companies": [
+        ("country", "TEXT"),      # two-letter code, e.g. KR, DE, US
+        ("city", "TEXT"),
+        ("lat", "REAL"),
+        ("lon", "REAL"),
+        ("timezone", "TEXT"),     # IANA name, e.g. Asia/Seoul
+    ],
+}
+
+
+def _add_missing_columns(conn) -> list[str]:
+    """Bring an older database up to the current set of columns."""
+    added = []
+    for table, columns in LATER_COLUMNS.items():
+        have = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, kind in columns:
+            if name in have:
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+            added.append(f"{table}.{name}")
+    return added
+
+
 def init_db() -> None:
     """Create the schema if it is not there yet, and tidy known bad values."""
     conn = connect()
     with conn:
         conn.executescript(SCHEMA)
+        _add_missing_columns(conn)
         conn.execute(
-            "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
+            "INSERT INTO meta(key, value) VALUES ('schema_version', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (str(SCHEMA_VERSION),),
         )
         repair_dates(conn)
+
+
+def touch(conn, key: str = "last_saved") -> str:
+    """Record that something changed, so the app can show when it last did."""
+    stamp = now()
+    conn.execute(
+        "INSERT INTO meta(key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, stamp),
+    )
+    return stamp
+
+
+def meta_get(key: str, default=None):
+    try:
+        row = connect().execute(
+            "SELECT value FROM meta WHERE key = ?", (key,)
+        ).fetchone()
+    except Exception:
+        return default
+    return row["value"] if row else default
+
+
+def meta_set(key: str, value) -> None:
+    conn = connect()
+    with conn:
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, str(value)),
+        )
 
 
 def repair_dates(conn: sqlite3.Connection) -> int:
