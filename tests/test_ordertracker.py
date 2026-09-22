@@ -590,6 +590,41 @@ class TestHttpApi(unittest.TestCase):
         self.assertIn(b"order_no", body)
 
 
+class TestStorageFailures(unittest.TestCase):
+    """A locked-down data folder must explain itself, not raise a traceback."""
+
+    def test_unopenable_database_raises_a_readable_error(self):
+        import sqlite3
+
+        real_connect = sqlite3.connect
+        sqlite3.connect = lambda *a, **k: (_ for _ in ()).throw(
+            sqlite3.OperationalError("unable to open database file"))
+        db._local.__dict__.clear()
+        try:
+            with self.assertRaises(db.StorageError) as caught:
+                db.connect()
+        finally:
+            sqlite3.connect = real_connect
+            db._local.__dict__.clear()
+
+        message = str(caught.exception)
+        self.assertIn(str(config.DB_PATH), message)
+        self.assertIn("doctor.py", message)
+        self.assertIn("--data", message)
+
+    def test_the_database_folder_is_created_if_missing(self):
+        db._local.__dict__.clear()
+        target = _TMP / "made-on-demand"
+        original = config.DB_PATH
+        config.DB_PATH = target / "orders.db"
+        try:
+            db.connect()
+            self.assertTrue(target.exists())
+        finally:
+            config.DB_PATH = original
+            db._local.__dict__.clear()
+
+
 # ------------------------------------------------------------------ samples
 
 class TestDemoData(unittest.TestCase):

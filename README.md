@@ -66,6 +66,26 @@ Other options:
 python3 run.py --port 9000     # if 8787 is taken (it will find a free port anyway)
 python3 run.py --no-browser    # don't open a browser
 python3 run.py --reindex       # re-read the text of every stored document
+python3 run.py --data FOLDER   # keep orders and documents somewhere else
+```
+
+### If it won't start
+
+Run the check. It walks the same steps the app does and names whatever
+fails:
+
+```bash
+python3 doctor.py              # Windows: py doctor.py
+```
+
+The usual culprit on Windows is something guarding the folder rather than
+anything in the app — ransomware protection (Windows Security → Virus &
+threat protection → Controlled folder access), OneDrive keeping the folder
+online-only, or antivirus blocking new database files. Keeping the data
+outside the protected area gets past all three:
+
+```
+py run.py --demo --data "%LOCALAPPDATA%\OrderTracker"
 ```
 
 **On Windows** use `py run.py`. If Python isn't installed, get it from

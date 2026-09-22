@@ -21,13 +21,37 @@ def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
+class StorageError(Exception):
+    """The data folder exists but cannot hold the database."""
+
+
+def _explain_open_failure(exc: Exception) -> "StorageError":
+    """Turn SQLite's terse refusal into something actionable."""
+    return StorageError(
+        f"Could not open the database at:\n    {config.DB_PATH}\n\n"
+        f"SQLite said: {exc}\n\n"
+        "The folder was created, so something is stopping files being made\n"
+        "inside it. On Windows this is usually ransomware protection\n"
+        "(Windows Security > Virus & threat protection > Controlled folder\n"
+        "access), OneDrive holding the folder online-only, or antivirus.\n\n"
+        "Run the check for a full report:\n"
+        "    py doctor.py\n\n"
+        "Or keep the data somewhere unrestricted:\n"
+        '    py run.py --demo --data "%LOCALAPPDATA%\\OrderTracker"'
+    )
+
+
 def connect() -> sqlite3.Connection:
     """Return this thread's connection, creating it on first use."""
     conn = getattr(_local, "conn", None)
     if conn is None:
         config.DATA_DIR.mkdir(parents=True, exist_ok=True)
         config.DOCS_DIR.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(config.DB_PATH, timeout=30)
+        config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            conn = sqlite3.connect(config.DB_PATH, timeout=30)
+        except sqlite3.OperationalError as exc:
+            raise _explain_open_failure(exc) from exc
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")

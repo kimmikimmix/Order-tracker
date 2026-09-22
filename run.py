@@ -10,6 +10,7 @@ Nothing here needs installing: it runs on a stock Python 3.10 or newer.
 """
 
 import argparse
+import os
 import socket
 import sys
 import threading
@@ -38,19 +39,30 @@ def main(argv=None):
     parser.add_argument("--port", type=int, default=config.PORT)
     parser.add_argument("--demo", action="store_true",
                         help="load sample data into a separate demo database")
+    parser.add_argument("--data", metavar="FOLDER",
+                        help="keep orders and documents in this folder instead "
+                             "(use when the app folder is locked down by "
+                             "antivirus or OneDrive)")
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--reindex", action="store_true",
                         help="re-read the text of every stored document before starting")
     args = parser.parse_args(argv)
 
-    if args.demo:
+    # An explicit --data folder wins over the demo default.
+    if args.data:
+        config.DATA_DIR = Path(os.path.expandvars(args.data)).expanduser().resolve()
+    elif args.demo:
         config.DATA_DIR = config.DATA_DIR.parent / "demo-data"
-        config.DOCS_DIR = config.DATA_DIR / "documents"
-        config.DB_PATH = config.DATA_DIR / "orders.db"
+    config.DOCS_DIR = config.DATA_DIR / "documents"
+    config.DB_PATH = config.DATA_DIR / "orders.db"
 
     from ordertracker import db, documents, sampledata, server
 
-    db.init_db()
+    try:
+        db.init_db()
+    except db.StorageError as exc:
+        print(f"\n{exc}\n", file=sys.stderr)
+        return 1
 
     if args.demo:
         conn = db.connect()
