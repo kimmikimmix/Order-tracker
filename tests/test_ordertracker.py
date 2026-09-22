@@ -1866,3 +1866,136 @@ class TestSpecAndSettingsOverHttp(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(request)
         self.assertEqual(caught.exception.code, 403)
+
+
+# ------------------------------------------------------------- uninstalling
+
+class TestUninstall(unittest.TestCase):
+    """Removing it must find the pieces that are not in the app folder, and
+    must not remove anything without being told to twice."""
+
+    def setUp(self):
+        import uninstall
+
+        self.uninstall = uninstall
+        self.holder = Path(tempfile.mkdtemp(prefix="ot-uninstall-"))
+        self.live = self.holder / "workspace" / "data"
+        self.demo = self.holder / "workspace" / "demo-data"
+
+        self.saved = (config.DATA_DIR, config.DOCS_DIR, config.DB_PATH,
+                      config.DEMO_DIR)
+        config.DATA_DIR = self.live
+        config.DOCS_DIR = self.live / "documents"
+        config.DB_PATH = self.live / "orders.db"
+        config.DEMO_DIR = self.demo
+        self.demo.mkdir(parents=True)
+        db._local.__dict__.clear()
+        fresh_db()
+
+        self._env = {k: os.environ.get(k) for k in
+                     ("XDG_CONFIG_HOME", "LOCALAPPDATA", "HOME",
+                      "XDG_DESKTOP_DIR")}
+        home = self.holder / "home"
+        (home / "Desktop").mkdir(parents=True)
+        os.environ.update({"XDG_CONFIG_HOME": str(home / "conf"),
+                           "LOCALAPPDATA": str(home / "conf"),
+                           "HOME": str(home),
+                           "XDG_DESKTOP_DIR": str(home / "Desktop")})
+
+    def tearDown(self):
+        (config.DATA_DIR, config.DOCS_DIR, config.DB_PATH,
+         config.DEMO_DIR) = self.saved
+        db._local.__dict__.clear()
+        for key, value in self._env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        shutil.rmtree(self.holder, ignore_errors=True)
+
+    def test_it_finds_the_data_folder_even_though_it_is_elsewhere(self):
+        from ordertracker import settings
+
+        orders.create_order({"order_no": "SO-BYE", "company": "Acme"})
+        documents.store("spec.txt", b"x", order_id=1)
+        settings.save(welcome_name="김영진", workspace=str(self.live.parent))
+
+        found = self.uninstall.find_everything()
+        kinds = {item["kind"]: item for item in found["items"]}
+
+        self.assertIn("data", kinds)
+        self.assertEqual(kinds["data"]["path"], self.live.resolve())
+        self.assertIn("1 orders and 1 documents", kinds["data"]["note"])
+        self.assertTrue(kinds["data"]["precious"])
+        self.assertIn("demo", kinds)
+        self.assertIn("settings", kinds)
+
+    def test_listing_removes_nothing(self):
+        orders.create_order({"order_no": "SO-STAY", "company": "Acme"})
+        self.assertEqual(self.uninstall.main([]), 0)
+        self.assertTrue(config.DB_PATH.exists(), "listing deleted the orders")
+
+    def test_the_wrong_answer_removes_nothing(self):
+        import io
+        import contextlib
+
+        orders.create_order({"order_no": "SO-STAY", "company": "Acme"})
+        real_stdin = sys.stdin
+        sys.stdin = io.StringIO("yes\n")
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = self.uninstall.main(["--delete"])
+        finally:
+            sys.stdin = real_stdin
+        self.assertEqual(code, 1)
+        self.assertTrue(config.DB_PATH.exists(), "'yes' was enough to delete")
+
+    def test_a_saved_copy_is_complete_before_anything_goes(self):
+        import io
+        import contextlib
+
+        orders.create_order({"order_no": "SO-RESCUE", "company": "대한정밀"})
+        documents.store("주문서.pdf", b"%PDF-1.4 x", order_id=1)
+        rescue = self.holder / "rescued"
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = self.uninstall.main(["--delete", "--yes",
+                                        "--save-to", str(rescue)])
+        self.assertEqual(code, 0)
+
+        self.assertFalse(self.live.exists(), "the data folder is still there")
+        self.assertFalse(self.demo.exists())
+
+        conn = sqlite3.connect(f"file:{rescue / 'orders.db'}?mode=ro", uri=True)
+        names = [r[0] for r in conn.execute("SELECT order_no FROM orders")]
+        conn.close()
+        self.assertEqual(names, ["SO-RESCUE"])
+        self.assertTrue(any((rescue / "documents").iterdir()))
+
+    def test_a_backup_folder_is_reported_but_never_removed(self):
+        from ordertracker import prefs
+
+        elsewhere = self.holder / "my backups"
+        elsewhere.mkdir()
+        prefs.save({"backup_dir": str(elsewhere)})
+
+        found = self.uninstall.find_everything()
+        self.assertIn(str(elsewhere), found["backup_dir"])
+        self.assertNotIn(elsewhere.resolve(),
+                         [item["path"] for item in found["items"]])
+
+        import io
+        import contextlib
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.uninstall.main(["--delete", "--yes"])
+        self.assertTrue(elsewhere.exists(), "a backup folder was deleted")
+
+    def test_the_app_folder_is_left_for_file_explorer(self):
+        import io
+        import contextlib
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.uninstall.main(["--delete", "--yes"])
+        self.assertTrue(config.BASE_DIR.exists())
+        self.assertIn(str(config.BASE_DIR.resolve()), out.getvalue())

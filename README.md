@@ -355,6 +355,39 @@ recording your chosen folder and welcome name:
 Data folders are excluded from git, so customer information is never
 committed.
 
+## Starting over
+
+To remove it from a machine:
+
+```bash
+python3 uninstall.py           # Windows: py uninstall.py
+```
+
+On its own it deletes nothing — it lists every piece it can find, with what
+each one holds, including the data folder (which is usually **not** inside the
+app folder) and the settings file (which is outside it by design). To go
+ahead:
+
+```
+py uninstall.py --delete
+```
+
+It asks you to type `DELETE` before anything goes. Your orders are the only
+thing here that cannot be downloaded again, so save a copy first if there is
+any doubt:
+
+```
+py uninstall.py --delete --save-to "D:\Order Tracker copy"
+```
+
+That writes a complete, working order book — `orders.db` plus every document
+— to the folder you name, before anything is removed. Drop it in as `data/`
+in a fresh install and you are back where you were.
+
+A backup folder is never touched: it is somewhere else on purpose. The app
+folder itself is left for you to delete in File Explorer, because the script
+is running from inside it.
+
 ## The welcome screen
 
 `setup.py` asks for a name to greet you with at startup. To change it later,
@@ -413,7 +446,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 146 tests, no dependencies
+python3 -m unittest discover tests     # 152 tests, no dependencies
 ```
 
 The pieces:
@@ -422,6 +455,7 @@ The pieces:
 run.py                      entry point
 setup.py                    first-run wizard: storage folder, shortcut, name
 move_to.py                  copy the app and its data to another drive
+uninstall.py                find every piece of it and remove them
 doctor.py                   startup check when something will not run
 ordertracker/
   config.py                 pipeline, thresholds, paths — edit this first
