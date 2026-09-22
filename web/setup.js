@@ -36,6 +36,11 @@ async function renderSetup() {
 
   const p = data.prefs;
   const st = data.status;
+  /* The folder the app sits in, one level up: somewhere we already know
+     can be written to, which on a locked-down machine may be the only
+     such place. */
+  const nearby = String(data.paths.app || '')
+    .replace(/[\\/][^\\/]*$/, '') || data.paths.app || '';
   const box = (id, value, attrs = '') =>
     `<input id="set-${id}" value="${esc(value ?? '')}" ${attrs}>`;
   const numbox = (id, value, attrs = 'step="any"') =>
@@ -112,8 +117,13 @@ async function renderSetup() {
         </div>
         <div class="filterbar" style="padding:8px 0">
           <button class="btn primary" id="set-backup-now">BACK UP NOW</button>
+          <button class="btn" id="set-backup-near"
+            title="${esc(nearby)}">USE THE FOLDER ABOVE THIS ONE</button>
           <span class="note" id="set-backup-msg"></span>
         </div>
+        <div class="note">A copy on the same drive still saves you from a
+          deleted folder or a half-written file — use it if this machine
+          will not let you write anywhere else.</div>
         ${st.snapshots && st.snapshots.length ? `
           <div class="note">${st.snapshots.length} copies in
             ${esc(st.folder)}:</div>
@@ -245,6 +255,10 @@ async function renderSetup() {
     renderSetup();
   };
   $('#set-backup-now').onclick = backupNow;
+  $('#set-backup-near').onclick = () => {
+    $('#set-backup_dir').value = nearby;
+    toast('Backup folder set to ' + nearby + ' — press SAVE SETTINGS', 'ok');
+  };
   $('#set-move-check').onclick = () => checkMove(false);
   $('#set-move-go').onclick = () => checkMove(true);
 }

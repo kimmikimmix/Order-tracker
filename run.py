@@ -234,10 +234,12 @@ def main(argv=None):
         where = drives.describe(config.DATA_DIR)["where"]
         print(f"  note: this data folder is on {where}.")
         print("        Keep one machine on it at a time, and keep a backup")
-        print("        somewhere local — SETUP > BACKUP FOLDER.")
+        print("        in a second folder — SETUP > BACKUP FOLDER.")
         from ordertracker import prefs
         if not (prefs.get("backup_dir") or "").strip():
-            print("        No backup folder is set yet. Please set one.")
+            print("        No backup folder is set yet. Please set one:")
+            print(f"        {config.BASE_DIR.parent} is a reasonable choice if")
+            print("        this machine will not let you write anywhere else.")
     print("  to stop: click QUIT in the app, or press Ctrl+C here")
     print()
 

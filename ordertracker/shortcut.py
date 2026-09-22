@@ -136,7 +136,8 @@ def _windows_shortcut(icon: Path | None) -> Path:
     try:
         desktop.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise ShortcutError(f"The desktop folder {desktop} is not reachable: {exc}") from exc
+        return _beside_the_app(f"the desktop folder {desktop} is not "
+                               f"reachable: {exc}")
 
     link = desktop / f"{SHORTCUT_NAME}.lnk"
     target, arguments = _launcher_command()
@@ -173,10 +174,27 @@ def _windows_shortcut(icon: Path | None) -> Path:
     try:
         return _windows_bat(desktop)
     except OSError as exc:
+        return _beside_the_app(
+            f"neither a shortcut nor a launcher could be written to "
+            f"{desktop}.\nPowerShell said: {problem}\n"
+            f"Writing the file failed with: {exc}")
+
+
+def _beside_the_app(why: str) -> Path:
+    """Leave something to double-click in the app folder instead.
+
+    A work machine that only lets approved programs write files refuses the
+    desktop but not the folder the app is sitting in — which is on the
+    user's own drive. A launcher there is worth far more than an error:
+    it can be dragged to the taskbar, pinned, or just double-clicked where
+    it is.
+    """
+    try:
+        return _windows_bat(config.BASE_DIR)
+    except OSError as exc:
         raise ShortcutError(
-            f"Neither a shortcut nor a launcher could be written to {desktop}.\n"
-            f"PowerShell said: {problem}\n"
-            f"Writing the file failed with: {exc}"
+            f"No way to make something to double-click: {why}\n"
+            f"Writing one into {config.BASE_DIR} failed too: {exc}"
         ) from exc
 
 

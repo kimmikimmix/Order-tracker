@@ -399,9 +399,9 @@ def run(destination, keep_git: bool = True, shortcut: bool = True,
     if shortcut:
         try:
             shortcut_path = repoint_shortcut(target)
-            steps.append(f"desktop shortcut now opens {target}")
+            steps.append(f"double-click this to start it: {shortcut_path}")
         except Exception as exc:
-            steps.append(f"the desktop shortcut could not be updated: {exc}")
+            steps.append(f"nothing to double-click could be made: {exc}")
 
     return {
         "ok": True,
@@ -461,9 +461,9 @@ def finish_here(shortcut: bool = True) -> dict:
     if shortcut:
         try:
             shortcut_path = repoint_shortcut(base)
-            steps.append(f"desktop shortcut now opens {base}")
+            steps.append(f"double-click this to start it: {shortcut_path}")
         except Exception as exc:
-            steps.append(f"the desktop shortcut could not be updated: {exc}")
+            steps.append(f"nothing to double-click could be made: {exc}")
 
     return {"ok": True, "destination": str(base), "orders": stored,
             "welcome_name": name,
