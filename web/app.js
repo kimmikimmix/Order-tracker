@@ -229,6 +229,11 @@ function applyHash() {
     openOrder(Number(orderId), tab);
     return;
   }
+  if (head === 'new') {
+    show('blotter');
+    newOrderModal(rest);          // #new/spec opens straight on the spec
+    return;
+  }
   if (head === 'case' && rest) {
     show('cases');
     openCase(Number(rest));
@@ -966,6 +971,13 @@ function renderDetail() {
   const tab = S.detailTab || 'order';
   const spec = o.spec || { values: {}, derived: {}, cost: null };
 
+  // A spec with no contact on it yet gets the one from the customer record,
+  // ready to save. Anything already saved is never overwritten.
+  const specValues = { ...(spec.values || {}) };
+  if (!specValues.contact_person && o.contact_name) {
+    specValues.contact_person = o.contact_name;
+  }
+
   const tabs = [
     ['order', 'ORDER'],
     ['spec', 'SPEC'],
@@ -1053,7 +1065,7 @@ function renderDetail() {
           <span class="note">${spec.updated_at
             ? 'spec saved ' + esc(spec.updated_at) + ' UTC' : 'no spec saved yet'}</span>
         </div>
-        ${specFormHTML('s', spec.values)}
+        ${specFormHTML('s', specValues)}
         <h2 class="sect">Worked out for you</h2>
         <div id="spec-derived"></div>
         <div class="filterbar" style="padding:10px 0 4px">
@@ -1062,7 +1074,7 @@ function renderDetail() {
       </div>
 
       <div class="dpane ${tab === 'cost' ? '' : 'hidden'}" id="pane-cost">
-        ${costFormHTML('s', spec.values)}
+        ${costFormHTML('s', specValues)}
         <h2 class="sect">Totals</h2>
         <div id="spec-cost"></div>
         <div class="filterbar" style="padding:10px 0 4px">
@@ -1158,8 +1170,10 @@ function renderDetail() {
   $('#d-savecost').onclick = saveSpec;
   $('#d-reorder').onclick = () => pickPreviousSpec(o.company, values => {
     fillSpecForm('s', values);
+    dateQuoteToday('s');
     refreshSpecCalc();
-    toast('Specification copied — check it, then SAVE SPEC & COST', 'ok');
+    toast('Specification copied and dated today — check it, '
+          + 'then SAVE SPEC & COST', 'ok');
   });
 
   const wideTabs = ['spec', 'cost'];
@@ -1358,7 +1372,7 @@ function closeModal() {
   if (!S.openOrder && NAV_VIEWS.includes(S.view)) setHash(S.view);
 }
 
-function newOrderModal() {
+function newOrderModal(openTab) {
   const today = new Date().toISOString().slice(0, 10);
   modal('NEW ORDER', `
     <div class="mtabs">
@@ -1433,15 +1447,36 @@ function newOrderModal() {
     };
   });
 
+  if (openTab) {
+    const wanted = $(`#modal .mtabs [data-mtab="${openTab}"]`);
+    if (wanted) wanted.click();
+  }
+
   $('#n-reorder').onclick = () =>
     pickPreviousSpec($('#n-company') ? $('#n-company').value : '', values => {
       newOrderModal();
       fillSpecForm('n', values);
+      dateQuoteToday('n');
       quoteFromForm('n', 'n-calc', 'n-calc');
-      toast('Specification copied. Give it an order number and a customer.', 'ok');
+      toast('Specification copied and dated today. Give it an order '
+            + 'number and a customer.', 'ok');
     });
 
   wireSpecForm('n', () => quoteFromForm('n', 'n-calc', 'n-calc'));
+
+  // A new order is nearly always a new quotation, so it is dated today
+  // until somebody says otherwise.
+  const quoteDate = $('#n-quote_date');
+  if (quoteDate && !quoteDate.value) quoteDate.value = todayISO();
+
+  // Choosing the customer brings their contact person across.
+  const companyField = $('#n-company');
+  if (companyField) {
+    const followCustomer = () => fillContactFrom('n', companyField.value);
+    companyField.addEventListener('change', followCustomer);
+    companyField.addEventListener('blur', followCustomer);
+    followCustomer();
+  }
   quoteFromForm('n', 'n-calc', 'n-calc');
 }
 

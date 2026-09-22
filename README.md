@@ -77,6 +77,12 @@ confirm the mapping before anything is written. Re-importing a fresh export
 updates the orders already on file, matched on order number, which is how you
 refresh statuses in bulk.
 
+**Fills in what it already knows.** A new order is dated today and its
+quotation section carries the customer's contact person across as soon as
+you pick the customer — both editable, neither guessed twice. Every date box
+has a TODAY button beside it, and the contact field offers everyone already
+on a customer record, so the same person is spelled the same way each time.
+
 **Repeats an order without retyping it.** A repeat customer usually wants the
 same board again. Pick the earlier order and the whole specification and cost
 sheet come across; you give it a new number and change what has moved.

@@ -716,3 +716,11 @@ ul.reasons { margin: 4px 0 8px 16px; padding: 0; color: var(--dim);
 a.ordlink { color: var(--blue); text-decoration: none; }
 a.ordlink:hover { text-decoration: underline; }
 .docrow.mailrow, .docrow.caserow { align-items: flex-start; }
+
+/* The TODAY button beside a date box: small enough not to compete with the
+   field, wide enough to hit without aiming. */
+.specgrid .fld button.today {
+  flex: none; padding: 0 7px; height: 23px; font-size: 10px;
+  color: var(--dim); letter-spacing: .5px;
+}
+.specgrid .fld button.today:hover { color: var(--amber); }

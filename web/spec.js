@@ -25,6 +25,11 @@ const SPEC_SECTIONS = [
 
 /* Fields that offer a list but still accept anything typed. */
 const SPEC_LISTS = {
+  /* Everyone already on a customer record, so a contact is picked rather
+     than retyped — and spelled the same way every time, which is what
+     makes it worth searching for later. */
+  contact_person: () => Array.from(new Set(
+    (S.boot.companies || []).map(c => c.contact_name).filter(Boolean))).sort(),
   product_type: () => S.boot.prefs.product_types,
   ipc_class: () => S.boot.prefs.ipc_classes,
   ccl_material: () => S.boot.prefs.ccl_materials,
@@ -79,7 +84,11 @@ function specField(prefix, name, values) {
         ${(SPEC_LISTS[name]() || []).map(v => `<option value="${esc(v)}">`).join('')}
       </datalist>`;
   } else if (kind === 'date') {
-    control = `<input id="${id}" type="date" value="${esc(raw ?? '')}">`;
+    /* Quotes are nearly always dated the day they are written, and a date
+       box is a fiddly thing to fill in with a mouse. */
+    control = `<input id="${id}" type="date" value="${esc(raw ?? '')}">
+      <button type="button" class="btn today" data-today="${id}"
+              title="Put today's date in">TODAY</button>`;
   } else if (kind === 'number' || kind === 'int') {
     const step = kind === 'int' ? '1' : 'any';
     control = `<input id="${id}" type="number" step="${step}"
@@ -207,12 +216,62 @@ function wireSpecForm(prefix, onChange) {
     input.addEventListener('input', fire);
     input.addEventListener('change', fire);
   });
+  document.querySelectorAll(`[data-today^="${prefix}-"]`).forEach(button => {
+    button.onclick = () => {
+      const field = document.getElementById(button.dataset.today);
+      if (!field) return;
+      field.value = todayISO();
+      field.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+  });
+
   const turnkey = document.getElementById(prefix + '-turnkey');
   const block = document.getElementById(prefix + '-turnkeyblock');
   if (turnkey && block) {
     turnkey.addEventListener('change', () =>
       block.classList.toggle('off', !turnkey.checked));
   }
+}
+
+/* Today where the user is, not in UTC: a quote written on the evening of
+   the 3rd in Seoul is dated the 3rd, not the 2nd. */
+function todayISO() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 10);
+}
+
+/* A copied specification is a new quotation, so it carries today's date
+   rather than the date of the order it came from. */
+function dateQuoteToday(prefix) {
+  const field = document.getElementById(prefix + '-quote_date');
+  if (field) field.value = todayISO();
+}
+
+/* The customer's contact, for filling the quotation section in. */
+function contactFor(companyName) {
+  const name = String(companyName || '').trim().toLowerCase();
+  if (!name) return null;
+  return (S.boot.companies || []).find(
+    c => String(c.name || '').trim().toLowerCase() === name) || null;
+}
+
+/* Put the customer's contact in, unless a person has typed one. Marked as
+   ours so that changing the customer changes it too, while anything typed
+   by hand is left exactly as it was. */
+function fillContactFrom(prefix, companyName) {
+  const field = document.getElementById(prefix + '-contact_person');
+  if (!field) return;
+  if (!field.dataset.watched) {
+    field.dataset.watched = '1';
+    field.dataset.auto = field.value ? '0' : '1';
+    // The moment somebody types their own contact in, it is theirs, and
+    // changing the customer afterwards must not take it away again.
+    field.addEventListener('input', () => { field.dataset.auto = '0'; });
+  }
+  if (field.dataset.auto !== '1') return;
+  const company = contactFor(companyName);
+  field.value = (company && company.contact_name) || '';
 }
 
 /* --------------------------------------------------------- the read-out */
