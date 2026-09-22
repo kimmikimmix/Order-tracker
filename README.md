@@ -88,6 +88,18 @@ python3 run.py --data FOLDER   # keep orders and documents somewhere else
 python3 run.py --where         # print where the data is kept, then exit
 ```
 
+### If the desktop shortcut is missing
+
+Make just the shortcut, leaving everything else alone:
+
+```
+py setup.py --shortcut
+```
+
+On Windows the Desktop folder is found through the registry, so a desktop
+that OneDrive has taken over is handled. If PowerShell is blocked by policy,
+a `.bat` launcher is written instead — it starts the app the same way.
+
 ### If it won't start
 
 Run the check. It walks the same steps the app does and names whatever
@@ -182,7 +194,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 60 tests, no dependencies
+python3 -m unittest discover tests     # 64 tests, no dependencies
 ```
 
 The pieces:

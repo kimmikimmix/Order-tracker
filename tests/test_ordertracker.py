@@ -701,6 +701,87 @@ class TestSettings(unittest.TestCase):
         self.assertNotIn("nonsense", self.settings.load())
 
 
+class TestWindowsShortcut(unittest.TestCase):
+    """The Windows path, exercised on any platform.
+
+    It was previously broken by string formatting over a PowerShell script
+    containing literal braces, and nothing caught it because only the Linux
+    path had a test.
+    """
+
+    def setUp(self):
+        from ordertracker import shortcut
+
+        self.shortcut = shortcut
+        self.desktop = Path(tempfile.mkdtemp(prefix="ot-win-desktop-"))
+        self._real_desktop = shortcut.windows_desktop
+        shortcut.windows_desktop = lambda: self.desktop
+
+    def tearDown(self):
+        self.shortcut.windows_desktop = self._real_desktop
+        shutil.rmtree(self.desktop, ignore_errors=True)
+
+    def _run_with(self, fake_run):
+        import subprocess as sp
+
+        real = sp.run
+        sp.run = fake_run
+        try:
+            return self.shortcut._windows_shortcut(self.shortcut.default_icon())
+        finally:
+            sp.run = real
+
+    def test_powershell_is_given_every_value_as_a_parameter(self):
+        seen = {}
+
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(command, **kwargs):
+            seen["command"] = command
+            # PowerShell would create the file; stand in for it.
+            Path(command[command.index("-LinkPath") + 1]).write_text("lnk")
+            return Result()
+
+        link = self._run_with(fake_run)
+
+        self.assertTrue(link.exists())
+        self.assertEqual(link.suffix, ".lnk")
+        command = seen["command"]
+        for flag in ("-LinkPath", "-Target", "-Arguments", "-WorkDir", "-Description"):
+            self.assertIn(flag, command)
+        self.assertIn("run.py", command[command.index("-Arguments") + 1])
+        self.assertEqual(command[command.index("-WorkDir") + 1], str(config.BASE_DIR))
+
+    def test_a_bat_launcher_is_written_when_powershell_refuses(self):
+        class Result:
+            returncode = 1
+            stdout = ""
+            stderr = "cannot be loaded because running scripts is disabled"
+
+        link = self._run_with(lambda command, **kwargs: Result())
+
+        self.assertEqual(link.suffix, ".bat")
+        body = link.read_text()
+        self.assertIn("run.py", body)
+        self.assertIn(str(config.BASE_DIR), body)
+
+    def test_a_bat_launcher_is_written_when_powershell_is_missing(self):
+        def fake_run(command, **kwargs):
+            raise OSError("powershell not found")
+
+        link = self._run_with(fake_run)
+        self.assertEqual(link.suffix, ".bat")
+        self.assertIn("run.py", link.read_text())
+
+    def test_a_path_with_awkward_characters_is_not_pasted_into_the_script(self):
+        """Braces and quotes in a path must never reach the script text."""
+        self.assertNotIn("{name}", self.shortcut._PS_SCRIPT)
+        self.assertIn("param(", self.shortcut._PS_SCRIPT)
+
+
 class TestShortcut(unittest.TestCase):
 
     @unittest.skipIf(sys.platform == "win32", "the .lnk path needs PowerShell")

@@ -193,10 +193,18 @@ def main(argv=None):
         from ordertracker import shortcut as shortcut_module
         try:
             shortcut_path = shortcut_module.create()
+        except shortcut_module.ShortcutError as exc:
+            print(f"\n  The desktop shortcut could not be created:\n    {exc}")
+            print("\n  Everything else is set up — start it with:  py run.py")
         except Exception as exc:
-            print(f"\n  The shortcut could not be created: {exc}")
-            print("  Everything else is set up; you can still start it with "
-                  "`py run.py`.")
+            print(f"\n  The desktop shortcut could not be created: "
+                  f"{type(exc).__name__}: {exc}")
+            print("\n  Everything else is set up — start it with:  py run.py")
+        else:
+            if shortcut_path.suffix == ".bat":
+                print("\n  PowerShell would not make a proper shortcut on this "
+                      "machine,\n  so a batch launcher was written instead. It "
+                      "works the same way.")
 
     # --- summary ----------------------------------------------------------
     print("\n  All set.\n")
@@ -208,9 +216,10 @@ def main(argv=None):
         print(f"    shortcut       {shortcut_path}")
     print()
     if shortcut_path:
-        print("  Double-click the desktop icon to start.\n")
+        print(f"  Double-click \"{shortcut_path.name}\" on your desktop to start.\n")
     else:
         print("  Start it with:  py run.py\n")
+        print("  To try the desktop shortcut on its own:  py setup.py --shortcut\n")
     return 0
 
 
