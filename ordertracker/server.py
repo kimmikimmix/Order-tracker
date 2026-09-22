@@ -455,8 +455,11 @@ def api_move(handler, match):
     if not folder:
         raise ApiError("Type the folder you want it copied to first.")
     try:
-        return relocate.run(folder, keep_git=bool(data.get("keep_git", True)),
-                            shortcut=bool(data.get("shortcut", True)))
+        return relocate.run(
+            folder,
+            keep_git=bool(data.get("keep_git", True)),
+            shortcut=bool(data.get("shortcut", True)),
+            replace_data=bool(data.get("replace_data", False)))
     except relocate.MoveError as exc:
         raise ApiError(str(exc)) from exc
     except OSError as exc:

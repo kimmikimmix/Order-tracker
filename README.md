@@ -194,6 +194,28 @@ SETUP page to the share. You get a complete, working order book copied there
 every time the app starts — which is what most people wanted from "keep it on
 the shared drive" in the first place.
 
+### If you run it from a share anyway
+
+It is your data, so nothing refuses. The app does what it can to make it
+survivable:
+
+- **The journal mode changes.** Write-ahead logging cannot work on a share,
+  so a database going there is converted to the older rollback journal at
+  the moment it is copied — while the file is new and nothing has it open,
+  which is the one time the change is certain to take. Every write also
+  waits for the disk rather than the cache.
+- **Only one machine at a time.** The running copy leaves a note in the data
+  folder and refreshes it. Another machine finding a fresh note stops and
+  says whose it is. A session that dies clears itself after five minutes,
+  and `--force` overrides it. Two machines writing to one database on a share
+  is the way to corrupt it, and this catches the honest version of that.
+- **Git stays behind.** It cannot do the renames a clone needs on a share, so
+  the move leaves the history out by default when the destination is one.
+  Update by pulling into a copy on the machine and copying across again.
+- **Set a backup folder on a local disk.** The advice inverts: with the live
+  book on the share, the safe copy belongs on the machine. The app says so at
+  startup if no backup folder is set.
+
 A USB stick or an external disk is a different matter: those are local
 filesystems and portable mode works on them properly.
 
@@ -472,7 +494,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 164 tests, no dependencies
+python3 -m unittest discover tests     # 178 tests, no dependencies
 ```
 
 The pieces:
@@ -494,6 +516,7 @@ ordertracker/
   printsheet.py             the printable specification and cost sheet
   geo.py                    countries, positions and time zones
   drives.py                 telling a local disk from a network share
+  inuse.py                  one machine at a time on a shared folder
   backup.py                 the second copy, and when things last saved
   relocate.py               copying the app and its data to another drive
   documents.py              file storage, classification, auto-filing

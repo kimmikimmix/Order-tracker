@@ -73,6 +73,13 @@ async function renderSetup() {
           <div class="wide"><input id="set-move_dir"
             placeholder="G:\\my folder\\Order Tracker"></div>
         </div>
+        <div class="specgrid" style="grid-template-columns:1fr">
+          <label class="lbl chk" for="set-move_git">
+            <input type="checkbox" id="set-move_git" checked>
+            BRING THE GIT HISTORY <i class="fhint">needed for
+              <code>git pull</code> there — leave it off for a network
+              drive, where git cannot work anyway</i></label>
+        </div>
         <div class="filterbar" style="padding:8px 0">
           <button class="btn" id="set-move-check">CHECK THE FOLDER</button>
           <button class="btn primary" id="set-move-go">COPY EVERYTHING THERE</button>
@@ -247,8 +254,23 @@ async function checkMove(thenCopy) {
          <pre>${esc(report.warning)}</pre></div>`
     : '';
 
+  /* Git cannot work on a share, so there is no point carrying its history
+     there — and it is most of the files. */
+  if (report.network) $('#set-move_git').checked = false;
+
+  const occupied = report.destination_stored
+    ? `<div class="movewarn"><b>That folder already holds
+         ${esc(report.destination_stored)}</b>
+         <pre>Copying replaces them with ${esc(report.stored
+           || 'an empty order book')} from
+${esc(report.data_source)}
+
+Only do this if the folder you are copying FROM is the one with the
+orders you want to keep.</pre></div>`
+    : '';
+
   if (!thenCopy) {
-    moveOut(table + warning + `<div class="note">That folder can be written
+    moveOut(table + warning + occupied + `<div class="note">That folder can be written
       to. Nothing has been copied — press COPY EVERYTHING THERE when you are
       ready.${report.not_empty ? ' It is not empty; files with the same '
         + 'names will be overwritten.' : ''}</div>`);
@@ -261,7 +283,16 @@ async function checkMove(thenCopy) {
       + '— its file locking cannot be relied on over a share. The right way '
       + 'to get your orders onto it is the backup folder above.\n\n'
       + 'Copy it there anyway?')) {
-    moveOut(table + warning);
+    moveOut(table + warning + occupied);
+    return;
+  }
+
+  if (report.destination_stored && !confirm(
+      `That folder already holds ${report.destination_stored}.\n\n`
+      + `Copying replaces them with ${report.stored || 'an empty order book'}`
+      + ` from\n${report.data_source}\n\n`
+      + 'Replace them?')) {
+    moveOut(table + warning + occupied);
     return;
   }
 
@@ -269,14 +300,18 @@ async function checkMove(thenCopy) {
     `Copy Order Tracker to:\n\n${report.destination}\n\n`
     + `Your orders (${report.stored || 'none yet'}) come too.\n`
     + 'Nothing in the current folder is deleted.');
-  if (!sure) { moveOut(table + warning); return; }
+  if (!sure) { moveOut(table + warning + occupied); return; }
 
   moveOut(table + '<div class="note">copying… this can take a minute on a '
     + 'slow drive. Leave this page open.</div>');
 
   let result;
   try {
-    result = await postJSON('/api/move', { folder });
+    result = await postJSON('/api/move', {
+      folder,
+      keep_git: $('#set-move_git').checked,
+      replace_data: Boolean(report.destination_stored),
+    });
   } catch (err) {
     moveOut(table + `<div class="moveerr">${esc(err.message)}</div>`);
     return;

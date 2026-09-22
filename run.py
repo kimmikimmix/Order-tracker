@@ -78,6 +78,9 @@ def main(argv=None):
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--no-backup", action="store_true",
                         help="skip the startup copy to the backup folder")
+    parser.add_argument("--force", action="store_true",
+                        help="start even though another machine has the data "
+                             "folder open")
     parser.add_argument("--reindex", action="store_true",
                         help="re-read the text of every stored document before starting")
     parser.add_argument("--where", action="store_true",
@@ -117,8 +120,15 @@ def main(argv=None):
         print("\n  Change it with:  py setup.py\n")
         return 0
 
-    from ordertracker import (backup, db, documents, sampledata,
-                              server)
+    from ordertracker import (backup, db, documents, drives, inuse,
+                              sampledata, server)
+
+    # On a shared folder, two machines writing at once is the way to lose
+    # the lot. Check before anything is opened.
+    held = inuse.held_elsewhere()
+    if held and not args.force:
+        print(f"\n  {inuse.describe(held)}\n", file=sys.stderr)
+        return 1
 
     try:
         db.init_db()
@@ -174,10 +184,27 @@ def main(argv=None):
     url = f"http://{args.host}:{port}/"
     httpd = server.serve(args.host, port)
 
+    inuse.claim()
+    keep_note = threading.Event()
+
+    def hold_the_note():
+        while not keep_note.wait(inuse.REFRESH_SECONDS):
+            inuse.claim()
+
+    threading.Thread(target=hold_the_note, daemon=True).start()
+
     print()
     print("  ORDER TRACKER")
     print(f"  {url}")
     print(f"  data: {config.DATA_DIR}")
+    if db.on_network():
+        where = drives.describe(config.DATA_DIR)["where"]
+        print(f"  note: this data folder is on {where}.")
+        print("        Keep one machine on it at a time, and keep a backup")
+        print("        somewhere local — SETUP > BACKUP FOLDER.")
+        from ordertracker import prefs
+        if not (prefs.get("backup_dir") or "").strip():
+            print("        No backup folder is set yet. Please set one.")
     print("  to stop: click QUIT in the app, or press Ctrl+C here")
     print()
 
@@ -189,6 +216,8 @@ def main(argv=None):
     except KeyboardInterrupt:
         print("\n  stopped")
     finally:
+        keep_note.set()
+        inuse.release()
         httpd.server_close()
     return 0
 

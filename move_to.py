@@ -106,6 +106,8 @@ def main(argv=None):
                         help="test the destination and report, without copying")
     parser.add_argument("--force", action="store_true",
                         help="copy even though Order Tracker is still running")
+    parser.add_argument("--replace-data", action="store_true",
+                        help="overwrite orders already in the destination")
     parser.add_argument("--manual", action="store_true",
                         help="print what to copy where, and copy nothing")
     parser.add_argument("--finish", action="store_true",
@@ -150,6 +152,15 @@ def main(argv=None):
         print("  [ ok ] a database can be created there")
         print(f"  [ ok ] your orders would come from {report['data_source']}")
         print(f"         ({report['stored'] or 'nothing stored yet'})")
+        if report["destination_stored"]:
+            print(f"  [ !! ] that folder ALREADY holds "
+                  f"{report['destination_stored']}")
+            print("         copying would replace them — add --replace-data "
+                  "if that is right")
+        if report["warning"]:
+            print()
+            for text in report["warning"].splitlines():
+                print(f"  ! {text}" if text else "  !")
         print("\n  Nothing was copied. Run the same command without --check "
               "to do it.\n")
         return 0
@@ -163,13 +174,19 @@ def main(argv=None):
         print("  (If you are sure it is safe, add --force.)\n")
         return 1
 
+    if report["warning"]:
+        for text in report["warning"].splitlines():
+            print(f"  ! {text}" if text else "  !")
+        print()
+
     if report["not_empty"]:
         print("  Note: that folder is not empty. Files with the same names will")
         print("  be overwritten; anything else there is left alone.\n")
 
     try:
         result = relocate.run(args.destination, keep_git=not args.no_git,
-                              shortcut=not args.no_shortcut)
+                              shortcut=not args.no_shortcut,
+                              replace_data=args.replace_data)
     except relocate.MoveError as exc:
         print(f"  {exc}\n")
         print("  Nothing has been changed in the original folder.\n")

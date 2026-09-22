@@ -854,7 +854,8 @@ class TestMoveToAnotherDrive(unittest.TestCase):
         stubborn.chmod(0o444)
 
         self.assertEqual(
-            move_to.main([str(self.target), "--no-git", "--no-shortcut"]), 0,
+            move_to.main([str(self.target), "--no-git", "--no-shortcut",
+                          "--replace-data"]), 0,
             "a repeat copy was refused")
         self.assertTrue(stubborn.exists())
 
@@ -914,6 +915,116 @@ class TestMoveToAnotherDrive(unittest.TestCase):
                               "--force"]), 0)
         finally:
             relocate.running_copy = real
+
+    def test_it_will_not_quietly_replace_orders_already_there(self):
+        """Updating the app by copying it over an installed one is exactly
+        how someone would wipe the order book they were trying to keep."""
+        import move_to
+        from ordertracker import relocate
+
+        orders.create_order({"order_no": "SO-SOURCE", "company": "Acme"})
+        self.assertEqual(
+            move_to.main([str(self.target), "--no-git", "--no-shortcut"]), 0)
+
+        # The destination now has orders of its own. Pretend the source has
+        # since been emptied, as a fresh clone would be.
+        conn = db.connect()
+        with conn:
+            conn.execute("DELETE FROM orders")
+
+        with self.assertRaises(relocate.MoveError) as caught:
+            relocate.run(self.target, keep_git=False, shortcut=False)
+        self.assertIn("already holds", str(caught.exception))
+
+        # And they are still there.
+        moved = sqlite3.connect(
+            f"file:{self.target / 'data' / 'orders.db'}?mode=ro", uri=True)
+        names = [r[0] for r in moved.execute("SELECT order_no FROM orders")]
+        moved.close()
+        self.assertEqual(names, ["SO-SOURCE"])
+
+    def test_saying_so_explicitly_does_replace_them(self):
+        import move_to
+        from ordertracker import relocate
+
+        orders.create_order({"order_no": "SO-OLD", "company": "Acme"})
+        move_to.main([str(self.target), "--no-git", "--no-shortcut"])
+
+        conn = db.connect()
+        with conn:
+            conn.execute("UPDATE orders SET order_no = 'SO-NEW'")
+            db.reindex_order(conn, 1)
+
+        result = relocate.run(self.target, keep_git=False, shortcut=False,
+                              replace_data=True)
+        self.assertIn("1 orders", result["orders"])
+
+        moved = sqlite3.connect(
+            f"file:{self.target / 'data' / 'orders.db'}?mode=ro", uri=True)
+        names = [r[0] for r in moved.execute("SELECT order_no FROM orders")]
+        moved.close()
+        self.assertEqual(names, ["SO-NEW"])
+
+    def test_a_copy_onto_a_share_arrives_in_a_journal_mode_it_can_use(self):
+        """Write-ahead logging does not work over a network filesystem. The
+        copy is the one moment the mode can be changed with certainty, so it
+        has to happen there rather than on first use."""
+        from ordertracker import drives, relocate
+
+        orders.create_order({"order_no": "SO-NET", "company": "Acme"})
+        real = drives.describe
+        drives.describe = lambda path: {"network": True, "where": r"\\srv\share"}
+        try:
+            relocate.run(self.target, keep_git=False, shortcut=False)
+        finally:
+            drives.describe = real
+
+        copy = sqlite3.connect(self.target / "data" / "orders.db")
+        mode = copy.execute("PRAGMA journal_mode").fetchone()[0]
+        copy.close()
+        self.assertEqual(mode.lower(), "delete")
+
+    def test_a_copy_onto_a_local_disk_keeps_write_ahead_logging(self):
+        from ordertracker import relocate
+
+        orders.create_order({"order_no": "SO-LOCAL", "company": "Acme"})
+        relocate.run(self.target, keep_git=False, shortcut=False)
+
+        copy = sqlite3.connect(self.target / "data" / "orders.db")
+        mode = copy.execute("PRAGMA journal_mode").fetchone()[0]
+        copy.close()
+        self.assertEqual(mode.lower(), "wal")
+
+    def test_a_journal_mode_that_cannot_be_set_does_not_stop_the_app(self):
+        """A busy or networked database can refuse the change. Asking is
+        worth it; failing to start over it is not."""
+        from ordertracker import drives
+
+        holder = sqlite3.connect(config.DB_PATH, timeout=1)
+        holder.execute("BEGIN EXCLUSIVE")
+        real = drives.describe
+        drives.describe = lambda path: {"network": True, "where": "share"}
+        db.forget_network()
+        db._local.__dict__.clear()
+        try:
+            conn = db.connect()          # must not raise
+            self.assertIsNotNone(conn)
+        finally:
+            drives.describe = real
+            db.forget_network()
+            holder.rollback()
+            holder.close()
+            db._local.__dict__.clear()
+
+    def test_the_plan_says_what_is_already_in_the_destination(self):
+        import move_to
+        from ordertracker import relocate
+
+        orders.create_order({"order_no": "SO-THERE", "company": "Acme"})
+        move_to.main([str(self.target), "--no-git", "--no-shortcut"])
+
+        report = relocate.plan(self.target, probe=False)
+        self.assertIn("1 orders", report["destination_stored"])
 
     def test_the_manual_plan_copies_nothing_and_names_the_data_folder(self):
         """When the drive refuses Python, the plan has to be followable in
@@ -2127,3 +2238,73 @@ class TestNetworkDrives(unittest.TestCase):
             shutil.rmtree(target.parent, ignore_errors=True)
         finally:
             self.drives.warning_for = real
+
+
+# -------------------------------------------------- two machines, one folder
+
+class TestInUseNote(unittest.TestCase):
+    """SQLite's locking cannot be relied on over a share, so two machines
+    writing to one order book is how it gets corrupted. A note in the data
+    folder catches the honest version of that mistake."""
+
+    def setUp(self):
+        from ordertracker import inuse
+
+        self.inuse = inuse
+        self.holder = Path(tempfile.mkdtemp(prefix="ot-inuse-"))
+        self.saved = config.DATA_DIR
+        config.DATA_DIR = self.holder
+
+    def tearDown(self):
+        config.DATA_DIR = self.saved
+        shutil.rmtree(self.holder, ignore_errors=True)
+
+    def write_note(self, host, minutes_ago=0):
+        import json
+        from datetime import datetime, timedelta, timezone
+
+        when = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+        self.inuse.note_path().write_text(json.dumps({
+            "host": host, "pid": 1, "data": str(self.holder),
+            "at": when.isoformat(timespec="seconds"),
+        }), encoding="utf-8")
+
+    def test_an_empty_folder_is_free(self):
+        self.assertIsNone(self.inuse.held_elsewhere())
+
+    def test_our_own_note_is_not_in_the_way(self):
+        self.inuse.claim()
+        self.assertIsNone(self.inuse.held_elsewhere())
+
+    def test_another_machine_holds_it(self):
+        self.write_note("EOS-DESKTOP")
+        held = self.inuse.held_elsewhere()
+        self.assertIsNotNone(held)
+        self.assertEqual(held["host"], "EOS-DESKTOP")
+        self.assertIn("EOS-DESKTOP", self.inuse.describe(held))
+        self.assertIn("corrupted", self.inuse.describe(held))
+
+    def test_a_note_from_a_session_that_died_clears_itself(self):
+        self.write_note("EOS-DESKTOP", minutes_ago=30)
+        self.assertIsNone(self.inuse.held_elsewhere(),
+                          "a stale note locked everyone out")
+
+    def test_a_damaged_note_does_not_lock_anyone_out(self):
+        self.inuse.note_path().write_text("{ not json", encoding="utf-8")
+        self.assertIsNone(self.inuse.held_elsewhere())
+
+    def test_releasing_leaves_someone_else_note_alone(self):
+        self.write_note("EOS-DESKTOP")
+        self.inuse.release()
+        self.assertTrue(self.inuse.note_path().exists())
+
+    def test_releasing_clears_our_own(self):
+        self.inuse.claim()
+        self.inuse.release()
+        self.assertFalse(self.inuse.note_path().exists())
+
+    def test_a_folder_that_cannot_be_written_is_not_a_reason_to_refuse(self):
+        config.DATA_DIR = self.holder / "not-a-folder" / "inside"
+        (self.holder / "not-a-folder").write_text("a file", encoding="utf-8")
+        self.assertIsNone(self.inuse.claim())
+        self.assertIsNone(self.inuse.held_elsewhere())

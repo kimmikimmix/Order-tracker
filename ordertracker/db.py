@@ -9,7 +9,7 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 
-from . import config
+from . import config, drives
 
 _local = threading.local()
 
@@ -19,6 +19,23 @@ SCHEMA_VERSION = 2
 def now() -> str:
     """UTC timestamp in a sortable, SQLite-friendly form."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+_network = None
+
+
+def on_network() -> bool:
+    """Is the data folder on a network share? Worked out once."""
+    global _network
+    if _network is None:
+        _network = drives.describe(config.DATA_DIR)["network"]
+    return _network
+
+
+def forget_network() -> None:
+    """Re-check the drive. Used after the data folder moves, and by tests."""
+    global _network
+    _network = None
 
 
 class StorageError(Exception):
@@ -53,9 +70,21 @@ def connect() -> sqlite3.Connection:
         except sqlite3.OperationalError as exc:
             raise _explain_open_failure(exc) from exc
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        # Write-ahead logging is faster and safer, but it needs shared memory
+        # that a network share cannot provide — SQLite says plainly that WAL
+        # does not work over a network filesystem. On one, fall back to the
+        # old rollback journal and make every write wait for the disk, which
+        # is as careful as it can be made there.
+        network = on_network()
+        # Changing journal mode needs a moment of exclusive access, which a
+        # busy or networked database may refuse. Getting the preferred mode
+        # is worth asking for and never worth failing to start over.
+        try:
+            conn.execute("PRAGMA journal_mode=" + ("DELETE" if network else "WAL"))
+        except sqlite3.OperationalError:
+            pass
+        conn.execute("PRAGMA synchronous=" + ("FULL" if network else "NORMAL"))
         conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA synchronous=NORMAL")
         _local.conn = conn
     return conn
 

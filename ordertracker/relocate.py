@@ -103,6 +103,26 @@ def copy_database(source_db: Path, target_db: Path) -> None:
         source_conn.close()
 
 
+def set_journal_mode(db_path: Path, network: bool) -> str:
+    """Put a freshly copied database into the right journal mode.
+
+    Done here because this file is brand new and nothing else has it open,
+    which is the one moment the change is certain to take. A database that
+    arrives on a share still in write-ahead mode would otherwise have to be
+    converted on first use, when it may well be refused.
+    """
+    wanted = "DELETE" if network else "WAL"
+    try:
+        conn = sqlite3.connect(db_path, timeout=30)
+        try:
+            got = conn.execute(f"PRAGMA journal_mode={wanted}").fetchone()[0]
+        finally:
+            conn.close()
+        return str(got)
+    except sqlite3.Error:
+        return ""
+
+
 def usable(folder: Path) -> tuple[bool, str]:
     """Can we create files and a database in here?"""
     try:
@@ -197,6 +217,10 @@ def plan(destination, probe: bool = True) -> dict:
         "stored": count_stored(config.DB_PATH.resolve()),
         "exists": target.exists(),
         "not_empty": target.exists() and any(target.iterdir()),
+        # What is already in the destination. Copying over a folder that
+        # holds more than the source does is how someone updating the app
+        # would wipe the orders they were trying to keep.
+        "destination_stored": count_stored(target / "data" / "orders.db"),
         "problem": "",
         "writable": False,
         "reason": "",
@@ -242,9 +266,25 @@ def copy_app(source: Path, destination: Path, keep_git: bool = True) -> None:
                         + "\n\n" + WINDOWS_ADVICE) from exc
 
 
-def copy_data(destination: Path) -> dict:
-    """Bring the orders and the documents across, wherever they live now."""
-    result = {"orders": "", "documents": 0}
+def copy_data(destination: Path, replace: bool = False) -> dict:
+    """Bring the orders and the documents across, wherever they live now.
+
+    Refuses to write over a destination that already holds orders unless
+    told to: that folder may be the one with the real order book in it.
+    """
+    result = {"orders": "", "documents": 0, "replaced": "", "journal": ""}
+    already = count_stored(destination / "data" / "orders.db")
+    if already and not replace:
+        raise MoveError(
+            f"{destination / 'data'} already holds {already}.\n\n"
+            f"This copy would replace them with {count_stored(config.DB_PATH)} "
+            "from\n"
+            f"{config.DATA_DIR}.\n\n"
+            "If that is what you want, say so explicitly — tick the box on the "
+            "page,\nor pass --replace-data on the command line. Nothing has "
+            "been changed."
+        )
+    result["replaced"] = already
     db_source = config.DB_PATH.resolve()
     data_target = destination / "data"
 
@@ -261,6 +301,8 @@ def copy_data(destination: Path) -> dict:
             "Close Order Tracker if it is running, then try again."
         ) from exc
     result["orders"] = count_stored(data_target / "orders.db")
+    result["journal"] = set_journal_mode(
+        data_target / "orders.db", drives.describe(destination)["network"])
 
     documents_source = config.DOCS_DIR.resolve()
     if documents_source.exists():
@@ -301,7 +343,8 @@ def repoint_shortcut(destination: Path):
         config.BASE_DIR, config.ASSETS_DIR = real_base, real_assets
 
 
-def run(destination, keep_git: bool = True, shortcut: bool = True) -> dict:
+def run(destination, keep_git: bool = True, shortcut: bool = True,
+        replace_data: bool = False) -> dict:
     """Copy the app and its data, and leave the copy ready to run.
 
     Raises MoveError with something worth reading when a step fails. The
@@ -318,10 +361,29 @@ def run(destination, keep_git: bool = True, shortcut: bool = True) -> dict:
     # taken from wherever it lives right now.
     carried = dict(settings.load())
 
+    # Check the data question before anything is written, so a refusal
+    # leaves the destination exactly as it was.
+    already = count_stored(target / "data" / "orders.db")
+    if already and not replace_data:
+        raise MoveError(
+            f"{target / 'data'} already holds {already}.\n\n"
+            f"This copy would replace them with "
+            f"{count_stored(config.DB_PATH) or 'an empty order book'} from\n"
+            f"{config.DATA_DIR}.\n\n"
+            "If that is what you want, say so explicitly — tick the box on "
+            "the page,\nor pass --replace-data on the command line. Nothing "
+            "has been changed."
+        )
+
     copy_app(source, target, keep_git=keep_git)
     steps = [f"copied the app to {target}"]
 
-    data = copy_data(target)
+    data = copy_data(target, replace=True)
+    if data["journal"] == "delete":
+        steps.append("set the database to the journal mode a network share "
+                     "can handle")
+    if data["replaced"]:
+        steps.insert(0, f"replaced the {data['replaced']} that were there")
     if data["orders"]:
         steps.append(f"copied your orders — {data['orders']}")
         if data["documents"]:
@@ -385,6 +447,11 @@ def finish_here(shortcut: bool = True) -> dict:
     else:
         steps.append("no data folder here yet, so this copy starts empty — "
                      f"your orders are currently in {config.DATA_DIR}")
+
+    here = base / "data" / "orders.db"
+    if stored and set_journal_mode(here, drives.describe(base)["network"]) == "delete":
+        steps.append("set the database to the journal mode a network share "
+                     "can handle")
 
     name = make_portable(base, carried)
     steps.append("set to portable — it keeps its data in its own folder")
