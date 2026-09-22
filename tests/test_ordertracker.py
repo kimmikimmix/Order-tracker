@@ -913,6 +913,83 @@ class TestMoveToAnotherDrive(unittest.TestCase):
         finally:
             move_to.running_copy = real
 
+    def test_the_manual_plan_copies_nothing_and_names_the_data_folder(self):
+        """When the drive refuses Python, the plan has to be followable in
+        File Explorer — including the data folder, which is easy to miss
+        because it is usually not inside the app folder."""
+        import io
+        import contextlib
+        import move_to
+
+        orders.create_order({"order_no": "SO-MANUAL", "company": "Acme"})
+        documents.store("spec.txt", b"x", order_id=1)
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = move_to.main([str(self.target), "--manual"])
+        printed = out.getvalue()
+
+        self.assertEqual(code, 0)
+        self.assertFalse(self.target.exists(), "--manual copied something")
+        self.assertIn(str(self.live), printed, "the data folder was not named")
+        self.assertIn("1 orders and 1 documents", printed)
+        self.assertIn(str(self.target / "data"), printed)
+        self.assertIn("--finish", printed)
+
+    def test_finish_completes_a_copy_made_by_hand(self):
+        import move_to
+        from ordertracker import settings
+
+        home = Path(tempfile.mkdtemp(prefix="ot-home-"))
+        previous = {k: os.environ.get(k) for k in
+                    ("XDG_CONFIG_HOME", "LOCALAPPDATA", "HOME")}
+        os.environ.update({"XDG_CONFIG_HOME": str(home),
+                           "LOCALAPPDATA": str(home), "HOME": str(home)})
+        real_base = config.BASE_DIR
+        real_marker = settings.PORTABLE_MARKER
+        try:
+            settings.save(welcome_name="김영진", workspace=str(self.live))
+            orders.create_order({"order_no": "SO-HAND", "company": "Acme"})
+
+            # Stand in for the Explorer copy: the app, then the data folder.
+            shutil.copytree(real_base, self.target,
+                            ignore=move_to.SKIP_NO_GIT, dirs_exist_ok=True)
+            shutil.copytree(self.live, self.target / "data", dirs_exist_ok=True)
+
+            config.BASE_DIR = self.target
+            settings.PORTABLE_MARKER = self.target / "portable.txt"
+            self.assertEqual(move_to.finish_here(make_shortcut=False), 0)
+
+            self.assertTrue((self.target / "portable.txt").exists())
+            carried = settings.read_file(self.target / "settings.json")
+            self.assertEqual(carried["welcome_name"], "김영진")
+            self.assertEqual(carried["workspace"], "")
+            # The folder it was copied from is left exactly as it was.
+            self.assertFalse((real_base / "portable.txt").exists())
+            self.assertTrue((self.live / "orders.db").exists())
+        finally:
+            config.BASE_DIR = real_base
+            settings.PORTABLE_MARKER = real_marker
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            shutil.rmtree(home, ignore_errors=True)
+
+    def test_finish_in_the_wrong_folder_says_so(self):
+        import move_to
+
+        empty = self.holder / "not the app"
+        empty.mkdir()
+        real_base = config.BASE_DIR
+        config.BASE_DIR = empty
+        try:
+            self.assertEqual(move_to.finish_here(make_shortcut=False), 1)
+            self.assertFalse((empty / "portable.txt").exists())
+        finally:
+            config.BASE_DIR = real_base
+
     def test_a_refused_file_is_named_rather_than_dumped(self):
         import move_to
 

@@ -36,6 +36,24 @@ def already_running(host: str, port: int) -> bool:
         return False
 
 
+def stored_here() -> str:
+    """What the data folder holds, so a copy can be checked at a glance."""
+    import sqlite3
+
+    if not config.DB_PATH.exists():
+        return ""
+    try:
+        conn = sqlite3.connect(f"file:{config.DB_PATH}?mode=ro", uri=True, timeout=5)
+        try:
+            orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+            docs = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return "a database that could not be read"
+    return f"{orders} orders and {docs} documents"
+
+
 def port_is_free(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -77,6 +95,7 @@ def main(argv=None):
     if args.where:
         from ordertracker import settings
         print(f"\n  data folder      {config.DATA_DIR}")
+        print(f"  holding          {stored_here() or 'nothing yet'}")
         print(f"  app folder       {config.BASE_DIR}")
         if config.PORTABLE:
             print("  mode             portable — everything lives in the app "

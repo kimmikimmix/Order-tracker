@@ -205,12 +205,34 @@ and copies nothing. If the copy itself fails, it names the files it could not
 write rather than printing a wall of Python. `--no-git` leaves out the git
 history, which is most of the files and none of the app.
 
-If you would rather do it by hand: close the app, copy the folder across in
-File Explorer (everything, including `data`), then run this inside the copy:
+### Doing it by hand
+
+If the drive refuses Python but File Explorer copies to it happily — which is
+common on company and network drives — ask for the plan instead:
 
 ```
-py setup.py --portable
+py move_to.py "G:\my folder\Order Tracker" --manual
 ```
+
+That writes nothing. It prints exactly which folders to copy and where, with
+the number of orders and documents in each so you can check the copy
+afterwards. It names your data folder specifically, because it is usually
+**not** inside the app folder and is the step people miss.
+
+Once you have copied everything across, open a Command Prompt in the new
+folder — click the address bar in File Explorer, type `cmd`, press Enter —
+and run:
+
+```
+py move_to.py --finish
+```
+
+That marks the copy portable, carries your welcome name over, repoints the
+desktop icon, and tells you how many orders it found. It never touches the
+folder you copied from, so if anything is wrong the original is still there.
+
+`py setup.py --portable` does the portable part on its own, if that is all
+you need.
 
 That writes a `portable.txt` marker beside `run.py`. While that file is
 there, orders and documents stay inside the app folder, any saved location is
@@ -243,7 +265,7 @@ python3 run.py --port 9000     # if 8787 is taken (it will find a free port anyw
 python3 run.py --no-browser    # don't open a browser
 python3 run.py --reindex       # re-read the text of every stored document
 python3 run.py --data FOLDER   # keep orders and documents somewhere else
-python3 run.py --where         # print where the data is kept, then exit
+python3 run.py --where         # print where the data is kept and what is in it
 ```
 
 ### If the desktop shortcut is missing
@@ -373,7 +395,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 139 tests, no dependencies
+python3 -m unittest discover tests     # 142 tests, no dependencies
 ```
 
 The pieces:

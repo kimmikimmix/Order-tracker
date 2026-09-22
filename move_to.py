@@ -32,6 +32,149 @@ SKIP_NO_GIT = shutil.ignore_patterns(*JUNK, "data", "demo-data", ".git")
 SKIP_JUNK_ONLY = shutil.ignore_patterns(*JUNK)
 
 
+def count_stored(db_path: Path) -> str:
+    """What is in a database, in words, so a copy can be checked by eye."""
+    if not db_path.exists():
+        return ""
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+        try:
+            orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+            docs = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return "a database that could not be read"
+    return f"{orders} orders and {docs} documents"
+
+
+def print_manual_plan(source: Path, destination: Path) -> int:
+    """Exactly what to copy where, for doing it in File Explorer.
+
+    Nothing is written anywhere by this. It exists because a drive that
+    Python cannot write to is often one File Explorer copies to quite
+    happily, and because the data folder is easy to miss: it is frequently
+    not inside the app folder at all.
+    """
+    data_dir = config.DATA_DIR.resolve()
+    data_inside = is_inside(data_dir, source)
+    stored = count_stored(config.DB_PATH.resolve())
+
+    print("  Copy it by hand — nothing below writes anything for you.\n")
+    print("  1. Close Order Tracker. Click QUIT in the app, or close the")
+    print("     black window if one is open. Copying a database while it is")
+    print("     open is the one way to end up with a half-written copy.\n")
+
+    print("  2. In File Explorer, open this folder:\n")
+    print(f"         {source}\n")
+    print("     Press Ctrl+A to select everything, then Ctrl+C.\n")
+
+    print("  3. Open the folder you want it in:\n")
+    print(f"         {destination}\n")
+    print("     Press Ctrl+V.\n")
+
+    if data_inside:
+        print("     Your orders live inside the folder you just copied, so")
+        print(f"     they came with it ({stored or 'nothing stored yet'}).\n")
+    elif stored:
+        print(f"  4. Your orders are NOT in that folder. They are here, and")
+        print("     this is the step people miss:\n")
+        print(f"         {data_dir}")
+        print(f"         ({stored})\n")
+        print("     Copy that whole folder, and paste it inside the new one")
+        print("     so that you end up with:\n")
+        print(f"         {destination / 'data'}\n")
+        print("     Copy the folder itself, not just the files in it — the")
+        print("     database keeps its most recent changes in companion")
+        print("     files that sit beside it.\n")
+    else:
+        print("  4. Nothing is stored yet, so there is no data to bring.\n")
+
+    step = "5" if not data_inside else "4"
+    print(f"  {step}. Open a Command Prompt in the new folder: click the address")
+    print("     bar in File Explorer, type  cmd  and press Enter. Then run:\n")
+    print("         py move_to.py --finish\n")
+    print("     That marks the copy as portable so it keeps its data in its")
+    print("     own folder, brings your welcome name across, repoints the")
+    print("     desktop icon, and tells you what it found.\n")
+
+    print("  Nothing has been copied or changed. Do the steps above, then")
+    print("  run the --finish command inside the copy.\n")
+    return 0
+
+
+def finish_here(make_shortcut: bool) -> int:
+    """Complete a copy that was made by hand. Run inside the new folder.
+
+    Deliberately never touches the folder it was copied from: if anything
+    here is wrong, the original is still sitting there untouched.
+    """
+    base = config.BASE_DIR.resolve()
+    print("\nORDER TRACKER — finish a hand-made copy\n")
+    print(f"  this folder   {base}\n")
+
+    for needed in ("run.py", "ordertracker", "web"):
+        if not (base / needed).exists():
+            print(f"  This does not look like an Order Tracker folder — {needed}")
+            print("  is missing. Run this inside the copy you just made.\n")
+            return 1
+
+    ok, reason = usable(base)
+    if not ok:
+        print(f"  This folder cannot be written to: {reason}")
+        print("  The copy will not be able to save anything here.\n")
+        return 1
+
+    # Read the settings before the marker goes down, so this machine's copy
+    # is what gets carried in.
+    carried = dict(settings.load())
+    carried["workspace"] = ""
+
+    data_here = base / "data" / "orders.db"
+    stored = count_stored(data_here)
+    if stored:
+        print(f"  [ ok ] found your orders here — {stored}")
+    elif (base / "data").exists():
+        print("  [ -- ] there is a data folder here but no orders.db in it")
+    else:
+        print("  [ -- ] no data folder here yet, so this copy starts empty")
+        print(f"         your orders are currently in {config.DATA_DIR}")
+        print(f"         copy that folder to {base / 'data'} and run this again,")
+        print("         or carry on and start fresh here")
+
+    (base / "portable.txt").write_text(
+        "This file makes Order Tracker portable.\n\n"
+        "While it is here, orders and documents are kept in this folder\n"
+        "rather than wherever setup.py was pointed, and the app works\n"
+        "whatever drive letter this folder ends up with.\n\n"
+        "Delete it to go back to a chosen folder.\n",
+        encoding="utf-8")
+    print("  [ ok ] set to portable — it keeps its data in its own folder")
+
+    try:
+        settings.dump(base / "settings.json", carried)
+        print("  [ ok ] settings carried over "
+              f"(welcome name: {carried.get('welcome_name') or 'not set'})")
+    except OSError as exc:
+        print(f"  [ -- ] the settings could not be written: {exc}")
+
+    if make_shortcut:
+        from ordertracker import shortcut as shortcut_module
+        try:
+            path = shortcut_module.create()
+            print(f"  [ ok ] desktop shortcut now opens this folder ({path.name})")
+        except Exception as exc:
+            print(f"  [ -- ] the desktop shortcut could not be updated: {exc}")
+            print("         try it on its own later:  py setup.py --shortcut")
+
+    print("\n  Done. Start it with:\n")
+    print("      py run.py\n")
+    print("  Check it is reading from here:\n")
+    print("      py run.py --where\n")
+    print("  Nothing in the folder you copied from has been touched.\n")
+    return 0
+
+
 def running_copy() -> str | None:
     """The data folder of an Order Tracker that is running, if one is.
 
@@ -142,7 +285,8 @@ def is_inside(child: Path, parent: Path) -> bool:
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Copy Order Tracker to another drive and run it from there.")
-    parser.add_argument("destination", help=r'the new folder, e.g. "G:\\Order Tracker"')
+    parser.add_argument("destination", nargs="?",
+                        help=r'the new folder, e.g. "G:\Order Tracker"')
     parser.add_argument("--no-git", action="store_true",
                         help="skip the .git folder (you then cannot `git pull` there)")
     parser.add_argument("--no-shortcut", action="store_true")
@@ -150,7 +294,18 @@ def main(argv=None):
                         help="test the destination and report, without copying")
     parser.add_argument("--force", action="store_true",
                         help="copy even though Order Tracker is still running")
+    parser.add_argument("--manual", action="store_true",
+                        help="print what to copy where, and copy nothing")
+    parser.add_argument("--finish", action="store_true",
+                        help="run inside a copy you made by hand, to complete it")
     args = parser.parse_args(argv)
+
+    if args.finish:
+        return finish_here(make_shortcut=not args.no_shortcut)
+
+    if not args.destination:
+        parser.error("give the folder to copy to, or use --finish inside a "
+                     "copy you made by hand")
 
     source = config.BASE_DIR.resolve()
     destination = settings.expand(args.destination).resolve()
@@ -158,6 +313,9 @@ def main(argv=None):
     print("\nORDER TRACKER — move to another drive\n")
     print(f"  from  {source}")
     print(f"  to    {destination}\n")
+
+    if args.manual:
+        return print_manual_plan(source, destination)
 
     if destination == source:
         print("  That is where it already is. Nothing to do.\n")
