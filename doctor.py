@@ -105,6 +105,28 @@ def can_write(folder: Path) -> str:
     return ""
 
 
+def tool_runs(script: Path) -> str:
+    """Empty when this machine will start that script, else what it said.
+
+    Worth asking separately. A managed machine can allow python.exe and
+    still refuse one particular script — blocked by name or by what it
+    does — and the refusal comes from Windows before any of our code runs,
+    so it arrives as a bare "access denied" with nothing to go on.
+    """
+    import subprocess
+    try:
+        done = subprocess.run([sys.executable, str(script), "--help"],
+                              capture_output=True, text=True, timeout=60,
+                              cwd=str(script.parent))
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"{type(exc).__name__}: {exc}"
+    if done.returncode != 0:
+        said = (done.stderr or done.stdout or "").strip().splitlines()
+        return (f"exit code {done.returncode}"
+                + (f" — {said[-1]}" if said else " with nothing said"))
+    return ""
+
+
 def line(label, value):
     print(f"  {label:<22} {value}")
 
@@ -243,6 +265,30 @@ def main():
         print("\n  The system temporary folder is closed to Python too. The")
         print("  app does its temporary work in the scratch folder beside")
         print("  your data instead, so reading email attachments still works.")
+
+    print("\nThe other tools")
+    refused_tool = False
+    for name in ("setup.py", "move_to.py", "uninstall.py"):
+        script = config.BASE_DIR / name
+        if not script.is_file():
+            continue
+        problem = tool_runs(script)
+        if problem:
+            refused_tool = True
+            print(f"  [FAIL] {name}")
+            print(f"         {problem}")
+        else:
+            print(f"  [ ok ] {name}")
+
+    if refused_tool:
+        print("\n  Python runs, but that script does not. On a managed")
+        print("  machine that is the security software refusing it, before")
+        print("  any of the code in it runs — which is why the message has")
+        print("  nothing in it. Nothing is wrong with the file.")
+        print("\n  Everything those tools do can be done by hand:")
+        print("   * to move the app, copy the folder in File Explorer, then")
+        print("     run  py run.py --here  inside the copy")
+        print("   * to choose a data folder, run  py run.py --data FOLDER")
 
     print("\nSomewhere else to keep the data")
     working = []

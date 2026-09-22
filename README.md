@@ -435,6 +435,7 @@ python3 run.py --no-browser    # don't open a browser
 python3 run.py --reindex       # re-read the text of every stored document
 python3 run.py --data FOLDER   # keep orders and documents somewhere else
 python3 run.py --where         # print where the data is kept and what is in it
+python3 run.py --here          # keep everything in this folder from now on
 ```
 
 ### If the desktop shortcut is missing
@@ -485,22 +486,30 @@ Some managed machines allow `git` to fill a folder and then refuse
 it can. There is nothing to fix in the app: put the whole thing on a drive
 you own — a personal network drive is fine for this — and run it from there.
 
-```
-cd /d C:\Users\<you>\Order-tracker
-py move_to.py "G:\your folder\Order Tracker" --no-git
-```
+**Copy it in File Explorer**, not with a command. The same machine that
+refuses Python a file will copy one quite happily through Explorer:
 
-That copies the app, marks the copy portable and leaves it keeping
-everything in its own folder: the database, the documents, the settings file
-and its own scratch folder for temporary work. After that, nothing is written
-to the system disk at all.
+1. Open `C:\Users\<you>\Order-tracker`, press Ctrl+A then Ctrl+C.
+2. Open `G:\your folder\Order Tracker` and press Ctrl+V.
 
-Run it from the copy:
+Then, inside the copy, one command tells it to keep everything there:
 
 ```
-cd /d G:\your folder\Order Tracker
-py run.py
+cd /d "G:\your folder\Order Tracker"
+py run.py --here
 ```
+
+`--here` marks the copy portable, brings your welcome name across and
+starts it. From then on the database, the documents, the settings file and
+the scratch folder for temporary work all live in that one folder, and
+nothing is written to the system disk at all. Afterwards just `py run.py`.
+
+`py move_to.py "G:\your folder\Order Tracker" --no-git` does the copying
+for you and is worth trying first — but on a machine locked down this hard,
+Windows may refuse to start that script at all, which looks like a bare
+"access denied" with nothing else printed. That is the security software
+stopping it before any of the code runs, and Explorer plus `--here` is the
+way round it. `py doctor.py` says which of the tools this machine will run.
 
 If the usual settings folder is closed to Python, `settings.json` is written
 beside `run.py` instead and read back from there — you lose nothing. If the
@@ -658,7 +667,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 229 tests, no dependencies
+python3 -m unittest discover tests     # 234 tests, no dependencies
 ```
 
 The pieces:

@@ -6,6 +6,7 @@
     python3 run.py --port 9000  use a different port
     python3 run.py --reindex    re-read every stored document, then start
     python3 run.py --no-backup  start without taking the usual backup copy
+    python3 run.py --here       keep everything in this folder from now on
 
 Nothing here needs installing: it runs on a stock Python 3.10 or newer.
 """
@@ -83,9 +84,35 @@ def main(argv=None):
                              "folder open")
     parser.add_argument("--reindex", action="store_true",
                         help="re-read the text of every stored document before starting")
+    parser.add_argument("--here", action="store_true",
+                        help="keep the orders, documents and settings in this "
+                             "folder from now on, and start (use this after "
+                             "copying the folder to another drive by hand)")
     parser.add_argument("--where", action="store_true",
                         help="print where the data is kept, then exit")
     args = parser.parse_args(argv)
+
+    # "Everything lives here" — for a folder copied to another drive by
+    # hand, which is how it gets there on a machine that will not let
+    # Python copy anything itself.
+    if args.here:
+        from ordertracker import relocate
+        print("\nORDER TRACKER — keep everything in this folder\n")
+        print(f"  this folder   {config.BASE_DIR.resolve()}\n")
+        try:
+            done = relocate.finish_here(shortcut=True)
+        except relocate.MoveError as exc:
+            print(f"  {exc}\n")
+            return 1
+        for step in done["steps"]:
+            print(f"  [ ok ] {step}")
+        print()
+        # config worked out where the data lived when it was imported, a
+        # moment before this folder became portable. Point it at here.
+        config.PORTABLE = True
+        config.WORKSPACE = config.BASE_DIR
+        config.DATA_DIR = config.BASE_DIR / "data"
+        config.DEMO_DIR = config.BASE_DIR / "demo-data"
 
     # An explicit --data folder wins over the demo default.
     if args.data:

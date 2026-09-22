@@ -2922,3 +2922,85 @@ class TestLockedDownMachine(unittest.TestCase):
             tempfile_module.tempdir = saved_dir
         self.assertFalse(stale.exists())
         self.assertTrue(fresh.exists())
+
+
+class TestToolsCanStart(unittest.TestCase):
+    """Whether this machine will run the app's other scripts at all.
+
+    A managed Windows machine can allow python.exe and still refuse one
+    script, and the refusal arrives from Windows before any of the code in
+    it runs — a bare "access denied" with no traceback. Asking the question
+    separately is what tells the two apart.
+    """
+
+    def setUp(self):
+        import doctor
+        self.doctor = doctor
+        self.holder = Path(tempfile.mkdtemp(prefix="ot-tools-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.holder, ignore_errors=True)
+
+    def script(self, name, body):
+        path = self.holder / name
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_a_script_that_starts_reports_no_problem(self):
+        good = self.script("good.py", "import sys\nsys.exit(0)\n")
+        self.assertEqual(self.doctor.tool_runs(good), "")
+
+    def test_a_script_that_will_not_start_says_what_happened(self):
+        missing = self.holder / "not-here.py"
+        problem = self.doctor.tool_runs(missing)
+        self.assertTrue(problem)
+
+    def test_a_script_that_fails_reports_its_last_words(self):
+        bad = self.script("bad.py",
+                          "import sys\n"
+                          "print('the drive is not there', file=sys.stderr)\n"
+                          "sys.exit(3)\n")
+        problem = self.doctor.tool_runs(bad)
+        self.assertIn("exit code 3", problem)
+        self.assertIn("the drive is not there", problem)
+
+
+class TestFinishingAHandMadeCopy(unittest.TestCase):
+    """`run.py --here`: what completes a copy made in File Explorer."""
+
+    def setUp(self):
+        from ordertracker import relocate, settings
+        self.relocate = relocate
+        self.settings = settings
+        self.copy = Path(tempfile.mkdtemp(prefix="ot-handcopy-"))
+        for piece in ("run.py", "ordertracker", "web"):
+            source = ROOT / piece
+            if source.is_dir():
+                shutil.copytree(source, self.copy / piece,
+                                ignore=shutil.ignore_patterns("__pycache__"))
+            else:
+                shutil.copy2(source, self.copy / piece)
+        self._base = config.BASE_DIR
+        self._marker = settings.PORTABLE_MARKER
+        config.BASE_DIR = self.copy
+        settings.PORTABLE_MARKER = self.copy / "portable.txt"
+
+    def tearDown(self):
+        config.BASE_DIR = self._base
+        self.settings.PORTABLE_MARKER = self._marker
+        shutil.rmtree(self.copy, ignore_errors=True)
+
+    def test_it_makes_the_copy_keep_its_own_data(self):
+        done = self.relocate.finish_here(shortcut=False)
+        self.assertTrue((self.copy / "portable.txt").exists())
+        self.assertTrue((self.copy / "settings.json").exists())
+        self.assertTrue(self.settings.portable())
+        self.assertEqual(self.settings.settings_path(),
+                         self.copy / "settings.json")
+        self.assertTrue(any("portable" in step for step in done["steps"]))
+
+    def test_it_refuses_a_folder_that_is_not_an_order_tracker(self):
+        (self.copy / "run.py").unlink()
+        with self.assertRaises(self.relocate.MoveError) as caught:
+            self.relocate.finish_here(shortcut=False)
+        self.assertIn("run.py", str(caught.exception))
