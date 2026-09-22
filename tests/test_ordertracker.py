@@ -3004,3 +3004,116 @@ class TestFinishingAHandMadeCopy(unittest.TestCase):
         with self.assertRaises(self.relocate.MoveError) as caught:
             self.relocate.finish_here(shortcut=False)
         self.assertIn("run.py", str(caught.exception))
+
+
+class TestSomethingToDoubleClick(unittest.TestCase):
+    """When the desktop is closed to us, the launcher goes in the app folder."""
+
+    def setUp(self):
+        from ordertracker import shortcut
+        self.shortcut = shortcut
+        self.folder = Path(tempfile.mkdtemp(prefix="ot-launcher-"))
+        self._base = config.BASE_DIR
+        config.BASE_DIR = self.folder
+
+    def tearDown(self):
+        config.BASE_DIR = self._base
+        shutil.rmtree(self.folder, ignore_errors=True)
+
+    def test_the_launcher_lands_beside_the_app(self):
+        written = self.shortcut._beside_the_app("the desktop refused it")
+        self.assertEqual(written.parent, self.folder)
+        body = written.read_bytes().decode("utf-8", "replace")
+        self.assertIn("run.py", body)
+        self.assertIn(str(self.folder), body)
+
+    def test_a_korean_folder_name_survives_the_launcher(self):
+        korean = self.folder / "김영진"
+        korean.mkdir()
+        config.BASE_DIR = korean
+        written = self.shortcut._beside_the_app("no desktop here")
+        body = written.read_bytes().decode("utf-8", "replace")
+        self.assertIn("김영진", body)
+
+    def test_nowhere_left_to_write_is_an_error_worth_reading(self):
+        config.BASE_DIR = self.folder / "not there" / "at all"
+        with self.assertRaises(self.shortcut.ShortcutError) as caught:
+            self.shortcut._beside_the_app("the desktop refused it")
+        self.assertIn("the desktop refused it", str(caught.exception))
+
+
+class TestUpdatingOneCopyFromAnother(unittest.TestCase):
+    """`run.py --update-to`: new program, same orders.
+
+    The copy that gets used lives where git cannot reach it, so this is the
+    only way it ever sees a change. It has to be impossible for it to cost
+    somebody their order book.
+    """
+
+    def setUp(self):
+        from ordertracker import relocate
+        self.relocate = relocate
+        self.holder = Path(tempfile.mkdtemp(prefix="ot-update-"))
+        self.new = self.holder / "new"
+        self.old = self.holder / "old"
+        for folder in (self.new, self.old):
+            (folder / "ordertracker").mkdir(parents=True)
+            (folder / "web").mkdir()
+            (folder / "run.py").write_text("# the app\n", encoding="utf-8")
+            (folder / "ordertracker" / "db.py").write_text("old\n",
+                                                           encoding="utf-8")
+        (self.new / "run.py").write_text("# the newer app\n", encoding="utf-8")
+        (self.new / "ordertracker" / "db.py").write_text("new\n",
+                                                         encoding="utf-8")
+        (self.new / "ordertracker" / "mail.py").write_text("new file\n",
+                                                           encoding="utf-8")
+
+        # What the old copy must keep.
+        (self.old / "data").mkdir()
+        (self.old / "data" / "orders.db").write_bytes(b"not really a database")
+        (self.old / "data" / "documents").mkdir()
+        (self.old / "data" / "documents" / "po.pdf").write_bytes(b"%PDF")
+        (self.old / "settings.json").write_text(
+            '{"welcome_name": "김영진"}', encoding="utf-8")
+        (self.old / "portable.txt").write_text("portable", encoding="utf-8")
+
+    def tearDown(self):
+        shutil.rmtree(self.holder, ignore_errors=True)
+
+    def test_the_program_is_replaced(self):
+        done = self.relocate.update_app(self.new, self.old)
+        self.assertEqual((self.old / "run.py").read_text(), "# the newer app\n")
+        self.assertEqual((self.old / "ordertracker" / "db.py").read_text(), "new\n")
+        self.assertTrue((self.old / "ordertracker" / "mail.py").exists())
+        # run.py, db.py and mail.py — the empty web folder has nothing in it.
+        self.assertEqual(done["files"], 3)
+
+    def test_the_orders_and_settings_are_left_alone(self):
+        self.relocate.update_app(self.new, self.old)
+        self.assertEqual((self.old / "data" / "orders.db").read_bytes(),
+                         b"not really a database")
+        self.assertTrue((self.old / "data" / "documents" / "po.pdf").exists())
+        self.assertIn("김영진", (self.old / "settings.json").read_text("utf-8"))
+        self.assertTrue((self.old / "portable.txt").exists())
+
+    def test_it_refuses_a_source_that_is_not_the_app(self):
+        with self.assertRaises(self.relocate.MoveError) as caught:
+            self.relocate.update_app(self.holder, self.old)
+        self.assertIn("does not look like", str(caught.exception))
+
+    def test_it_refuses_to_update_a_folder_from_itself(self):
+        with self.assertRaises(self.relocate.MoveError):
+            self.relocate.update_app(self.new, self.new)
+
+    def test_it_refuses_to_fill_someone_elses_folder(self):
+        stranger = self.holder / "my documents"
+        stranger.mkdir()
+        (stranger / "tax return.xlsx").write_bytes(b"mine")
+        with self.assertRaises(self.relocate.MoveError) as caught:
+            self.relocate.update_app(self.new, stranger)
+        self.assertIn("not an Order Tracker folder", str(caught.exception))
+
+    def test_an_empty_folder_is_a_fine_place_to_put_it(self):
+        fresh = self.holder / "fresh"
+        self.relocate.update_app(self.new, fresh)
+        self.assertTrue((fresh / "run.py").exists())

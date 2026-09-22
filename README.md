@@ -436,6 +436,8 @@ python3 run.py --reindex       # re-read the text of every stored document
 python3 run.py --data FOLDER   # keep orders and documents somewhere else
 python3 run.py --where         # print where the data is kept and what is in it
 python3 run.py --here          # keep everything in this folder from now on
+python3 run.py --update-to F   # write this app over the copy in folder F
+python3 run.py --update-from F # refresh this copy from the one in folder F
 ```
 
 ### If the desktop shortcut is missing
@@ -503,6 +505,25 @@ py run.py --here
 starts it. From then on the database, the documents, the settings file and
 the scratch folder for temporary work all live in that one folder, and
 nothing is written to the system disk at all. Afterwards just `py run.py`.
+
+**To update it later**, pull on the machine that can reach GitHub and push
+the new files across — git cannot be relied on over a share, and the copy
+has no git history of its own anyway:
+
+```
+cd /d C:\Users\<you>\Order-tracker
+git pull
+py run.py --update-to "G:\your folder\Order Tracker"
+```
+
+That replaces the program only. The orders, the documents, the settings and
+the portable marker in the copy are left exactly as they are, so an update
+can never cost you your order book. `py run.py --update-from "C:\..."` does
+the same thing from the other side, if you would rather run it in the copy.
+
+If the desktop refuses the shortcut — it will, on a machine like this — a
+launcher called `Order Tracker.bat` is written into the app folder instead.
+Double-click it to start, or drag it to the taskbar.
 
 `py move_to.py "G:\your folder\Order Tracker" --no-git` does the copying
 for you and is worth trying first — but on a machine locked down this hard,
@@ -667,7 +688,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 234 tests, no dependencies
+python3 -m unittest discover tests     # 243 tests, no dependencies
 ```
 
 The pieces:
