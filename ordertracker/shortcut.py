@@ -88,17 +88,46 @@ def _launcher_command() -> tuple[Path, str]:
     return target, f'"{config.BASE_DIR / "run.py"}"'
 
 
+def _console_encoding() -> str | None:
+    """The code page cmd.exe will read a .bat file with."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import locale
+
+        return locale.getpreferredencoding(False)
+    except Exception:
+        return None
+
+
 def _windows_bat(desktop: Path) -> Path:
-    """A plain batch launcher — the fallback when PowerShell is unavailable."""
+    """A plain batch launcher — the fallback when PowerShell is unavailable.
+
+    cmd.exe reads a .bat in the console code page, not UTF-8, so a path with
+    Korean, Japanese or accented characters has to be written in that code
+    page or the `cd` line arrives mangled.
+    """
     exe = python_for_launching()
     link = desktop / f"{SHORTCUT_NAME}.bat"
-    link.write_text(
-        "@echo off\r\n"
-        f"title {SHORTCUT_NAME}\r\n"
-        f'cd /d "{config.BASE_DIR}"\r\n'
-        f'"{exe}" run.py\r\n',
-        encoding="utf-8",
-    )
+    lines = [
+        "@echo off",
+        f"title {SHORTCUT_NAME}",
+        f'cd /d "{config.BASE_DIR}"',
+        f'"{exe}" run.py',
+    ]
+    body = "\r\n".join(lines) + "\r\n"
+
+    encoding = _console_encoding()
+    if encoding:
+        try:
+            link.write_bytes(body.encode(encoding))
+            return link
+        except (UnicodeEncodeError, LookupError):
+            pass  # the path needs characters this code page cannot express
+
+    # Fall back to switching the console to UTF-8 for the script's lifetime.
+    utf8_lines = [lines[0], "chcp 65001 > nul", *lines[1:]]
+    link.write_bytes(("\r\n".join(utf8_lines) + "\r\n").encode("utf-8"))
     return link
 
 

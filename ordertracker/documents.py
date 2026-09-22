@@ -49,12 +49,57 @@ def guess_kind(filename: str, text: str = "") -> str:
             or "OTHER")
 
 
+# Characters no filesystem will take, plus the device names Windows reserves.
+_UNSAFE_CHARS = set('<>:"/\\|?*')
+_RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL",
+                   *(f"COM{i}" for i in range(1, 10)),
+                   *(f"LPT{i}" for i in range(1, 10))}
+
+# Room for the content hash prefix inside the usual 255-byte filename limit.
+_MAX_NAME_BYTES = 180
+
+
+def _strip_unsafe(text: str) -> str:
+    return "".join("_" if (ch in _UNSAFE_CHARS or ord(ch) < 32) else ch
+                   for ch in text)
+
+
+def _truncate_bytes(text: str, limit: int) -> str:
+    """Trim to a byte budget without splitting a character in half."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text
+    return encoded[:limit].decode("utf-8", "ignore")
+
+
 def safe_name(filename: str) -> str:
-    """A filename safe to put on disk, with the extension preserved."""
-    name = unicodedata.normalize("NFKD", filename or "file")
-    name = name.encode("ascii", "ignore").decode("ascii")
-    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._") or "file"
-    return name[:120]
+    """A filename safe to put on disk, keeping its extension.
+
+    Non-Latin names are kept as they are: every filesystem this runs on
+    stores Unicode, and transliterating a Korean or Japanese filename to
+    ASCII throws away the whole name — and, worse, the extension with it,
+    which is what decides how the file gets read for searching.
+    """
+    raw = unicodedata.normalize("NFC", str(filename or "")).strip()
+    raw = raw.replace("\\", "/").rsplit("/", 1)[-1]  # drop any folder part
+    if not raw:
+        return "file"
+
+    stem, dot, extension = raw.rpartition(".")
+    if not dot or not stem:          # no extension, or a leading-dot name
+        stem, extension = raw, ""
+
+    stem = _strip_unsafe(stem).strip(" .")
+    extension = _strip_unsafe(extension).strip(" .")
+
+    if stem.upper() in _RESERVED_NAMES:
+        stem = f"_{stem}"
+    if not stem:
+        stem = "file"
+
+    suffix = f".{extension[:16]}" if extension else ""
+    stem = _truncate_bytes(stem, _MAX_NAME_BYTES - len(suffix.encode("utf-8")))
+    return f"{stem}{suffix}"
 
 
 def store(filename: str, data: bytes, order_id=None, company_id=None,

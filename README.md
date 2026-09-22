@@ -232,7 +232,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 67 tests, no dependencies
+python3 -m unittest discover tests     # 73 tests, no dependencies
 ```
 
 The pieces:

@@ -406,6 +406,52 @@ class TestDocuments(unittest.TestCase):
         self.assertIsNone(documents.autofile(doc["id"]))
         self.assertIsNone(documents.get(doc["id"])["order_id"])
 
+    def test_non_latin_filenames_keep_their_name_and_extension(self):
+        """A Korean or accented filename must survive being stored.
+
+        Losing the extension would also lose the text extraction, because
+        the reader is chosen by extension.
+        """
+        cases = {
+            "주문서 PO-2026-44817.pdf": "주문서 PO-2026-44817.pdf",
+            "김영진 견적서.xlsx": "김영진 견적서.xlsx",
+            "발주서.eml": "발주서.eml",
+            "ünïcödé fïle.docx": "ünïcödé fïle.docx",
+        }
+        for given, expected in cases.items():
+            with self.subTest(given=given):
+                self.assertEqual(documents.safe_name(given), expected)
+
+    def test_awkward_filenames_are_made_safe(self):
+        self.assertEqual(documents.safe_name("../../etc/passwd"), "passwd")
+        self.assertEqual(documents.safe_name(r"C:\evil\path.pdf"), "path.pdf")
+        self.assertEqual(documents.safe_name("CON.txt"), "_CON.txt")
+        self.assertEqual(documents.safe_name(""), "file")
+        self.assertNotIn("?", documents.safe_name("weird<>:|?.pdf"))
+
+    def test_a_very_long_name_is_trimmed_without_splitting_a_character(self):
+        name = documents.safe_name("한" * 400 + ".pdf")
+        self.assertTrue(name.endswith(".pdf"))
+        self.assertLessEqual(len(name.encode("utf-8")), 200)
+        name.encode("utf-8").decode("utf-8")   # no half character at the end
+
+    def test_a_korean_named_pdf_is_indexed_and_searchable(self):
+        order_id = orders.create_order({"order_no": "SO-9001",
+                                        "company": "대한정밀 주식회사"})
+        pdf = fixtures.make_pdf(["PURCHASE ORDER", "Meridian Freight MF-88213"],
+                                _TMP / "korean.pdf")
+        doc = documents.store("주문서 PO-2026-44817.pdf", pdf.read_bytes(),
+                              order_id=order_id)
+
+        self.assertTrue(doc["stored_name"].endswith(".pdf"))
+        self.assertIn("Meridian", doc["content_text"])
+        self.assertEqual(doc["kind"], "PO")
+
+        found = orders.search("meridian")["documents"]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["filename"], "주문서 PO-2026-44817.pdf")
+        self.assertTrue(orders.search("대한정밀")["orders"])
+
     def test_oversized_upload_is_refused(self):
         original = config.MAX_UPLOAD_BYTES
         try:
@@ -823,6 +869,37 @@ class TestWindowsShortcut(unittest.TestCase):
         link = self._run_with(fake_run)
         self.assertEqual(link.suffix, ".bat")
         self.assertIn("run.py", link.read_text())
+
+    def test_a_bat_for_a_korean_path_is_written_in_the_console_code_page(self):
+        """cmd reads a .bat in the console code page, not UTF-8."""
+        korean_folder = Path("G:/김영진/관리/TT")
+        real_base, real_encoding = config.BASE_DIR, self.shortcut._console_encoding
+        config.BASE_DIR = korean_folder
+        self.shortcut._console_encoding = lambda: "cp949"
+        try:
+            link = self.shortcut._windows_bat(self.desktop)
+            data = link.read_bytes()
+        finally:
+            config.BASE_DIR = real_base
+            self.shortcut._console_encoding = real_encoding
+
+        self.assertIn("김영진", data.decode("cp949"))
+        self.assertNotIn(b"chcp", data)
+
+    def test_a_bat_falls_back_to_utf8_when_the_code_page_cannot_cope(self):
+        korean_folder = Path("G:/김영진/관리/TT")
+        real_base, real_encoding = config.BASE_DIR, self.shortcut._console_encoding
+        config.BASE_DIR = korean_folder
+        self.shortcut._console_encoding = lambda: "cp1252"   # cannot hold Hangul
+        try:
+            link = self.shortcut._windows_bat(self.desktop)
+            data = link.read_bytes()
+        finally:
+            config.BASE_DIR = real_base
+            self.shortcut._console_encoding = real_encoding
+
+        self.assertIn(b"chcp 65001", data)
+        self.assertIn("김영진", data.decode("utf-8"))
 
     def test_a_path_with_awkward_characters_is_not_pasted_into_the_script(self):
         """Braces and quotes in a path must never reach the script text."""
