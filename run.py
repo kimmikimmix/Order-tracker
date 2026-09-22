@@ -97,13 +97,23 @@ def main(argv=None):
         print(f"\n  data folder      {config.DATA_DIR}")
         print(f"  holding          {stored_here() or 'nothing yet'}")
         print(f"  app folder       {config.BASE_DIR}")
+        print(f"  settings file    {settings.settings_path()}")
         if config.PORTABLE:
             print("  mode             portable — everything lives in the app "
                   "folder, and\n                   the saved setting is ignored")
         else:
-            print(f"  settings file    {settings.settings_path()}")
             chosen = settings.load().get("workspace") or ""
             print(f"  chosen location  {chosen or '(none — using the app folder)'}")
+
+        # In portable mode nothing should be left on the machine itself.
+        # Say so when something is, since that is the whole point of it.
+        leftover = settings.machine_dir()
+        if config.PORTABLE and leftover.exists():
+            print(f"\n  Still on this machine, from an earlier install:")
+            print(f"      {leftover}")
+            print("  Nothing reads it while portable.txt is here. Delete it "
+                  "if you want\n  this folder to be the only copy.")
+
         print("\n  Change it with:  py setup.py\n")
         return 0
 

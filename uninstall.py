@@ -145,6 +145,15 @@ def remove(item: dict) -> str:
             path.unlink()
     except OSError as exc:
         return f"could not remove {path}: {exc}"
+
+    # The settings file sits alone in a folder of its own. Taking the file
+    # and leaving the folder is not "removed", and it is what makes a later
+    # portable install look like it still has something on this machine.
+    if item["kind"] == "settings":
+        try:
+            path.parent.rmdir()
+        except OSError:
+            pass  # something else is in there; leave it alone
     return ""
 
 

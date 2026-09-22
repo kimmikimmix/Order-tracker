@@ -1972,6 +1972,35 @@ class TestUninstall(unittest.TestCase):
         self.assertEqual(names, ["SO-RESCUE"])
         self.assertTrue(any((rescue / "documents").iterdir()))
 
+    def test_the_settings_folder_goes_too_when_it_is_left_empty(self):
+        """Taking the file and leaving its folder is not "removed" — and it
+        makes a later portable install look like something is still here."""
+        import io
+        import contextlib
+        from ordertracker import settings
+
+        settings.save(welcome_name="김영진")
+        folder = settings.settings_path().parent
+        self.assertTrue(folder.exists())
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.uninstall.main(["--delete", "--yes"])
+        self.assertFalse(folder.exists(), "an empty settings folder was left")
+
+    def test_a_settings_folder_holding_something_else_is_left_alone(self):
+        import io
+        import contextlib
+        from ordertracker import settings
+
+        settings.save(welcome_name="김영진")
+        folder = settings.settings_path().parent
+        (folder / "something-else.txt").write_text("not ours", encoding="utf-8")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.uninstall.main(["--delete", "--yes"])
+        self.assertTrue(folder.exists())
+        self.assertFalse(settings.settings_path().exists())
+
     def test_a_backup_folder_is_reported_but_never_removed(self):
         from ordertracker import prefs
 
