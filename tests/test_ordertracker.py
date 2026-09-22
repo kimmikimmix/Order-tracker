@@ -710,7 +710,75 @@ class TestStorageFailures(unittest.TestCase):
         message = str(caught.exception)
         self.assertIn(str(config.DB_PATH), message)
         self.assertIn("doctor.py", message)
-        self.assertIn("--data", message)
+        self.assertIn("setup.py --folder", message)
+
+    def test_the_message_says_which_of_the_causes_it_actually_is(self):
+        """"Unable to open database file" covers several different problems.
+        The folder is probed at the moment it fails so the message can name
+        the one in front of you instead of listing all of them."""
+        import sqlite3
+
+        folder = Path(tempfile.mkdtemp(prefix="ot-locked-"))
+        saved = (config.DATA_DIR, config.DOCS_DIR, config.DB_PATH)
+        config.DATA_DIR = folder
+        config.DOCS_DIR = folder / "documents"
+        config.DB_PATH = folder / "orders.db"
+        real_connect = sqlite3.connect
+        db._local.__dict__.clear()
+        try:
+            # Plain files are fine; only the database is refused. That is
+            # ransomware protection or antivirus, and nothing else.
+            sqlite3.connect = lambda *a, **k: (_ for _ in ()).throw(
+                sqlite3.OperationalError("unable to open database file"))
+            with self.assertRaises(db.StorageError) as caught:
+                db.connect()
+            message = str(caught.exception)
+            self.assertIn("Ordinary files can be written there", message)
+            self.assertIn("Controlled folder access", message)
+            self.assertNotIn("permission on the folder", message)
+        finally:
+            sqlite3.connect = real_connect
+            (config.DATA_DIR, config.DOCS_DIR, config.DB_PATH) = saved
+            db._local.__dict__.clear()
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_a_folder_that_takes_no_files_at_all_is_named_as_such(self):
+        blocker = Path(tempfile.mkdtemp(prefix="ot-blocked-")) / "in the way"
+        blocker.write_text("a file, not a folder", encoding="utf-8")
+        found = db.probe_folder(blocker / "inside")
+        self.assertFalse(found["exists"])
+        self.assertTrue(found["made"], "creating the folder should have failed")
+        shutil.rmtree(blocker.parent, ignore_errors=True)
+
+    def test_a_healthy_folder_probes_clean(self):
+        found = db.probe_folder(config.DATA_DIR)
+        self.assertTrue(found["exists"])
+        self.assertTrue(found["file_ok"])
+        self.assertTrue(found["db_ok"])
+        self.assertFalse(found["network"])
+
+    def test_a_network_data_folder_is_mentioned_in_the_failure(self):
+        import sqlite3
+        from ordertracker import drives
+
+        real_describe = drives.describe
+        real_connect = sqlite3.connect
+        drives.describe = lambda path: {"network": True,
+                                        "where": r"\\EstInternetDisk\2-yjkim"}
+        sqlite3.connect = lambda *a, **k: (_ for _ in ()).throw(
+            sqlite3.OperationalError("unable to open database file"))
+        db._local.__dict__.clear()
+        db.forget_network()
+        try:
+            with self.assertRaises(db.StorageError) as caught:
+                db.connect()
+            self.assertIn("EstInternetDisk", str(caught.exception))
+            self.assertIn("network drive", str(caught.exception))
+        finally:
+            drives.describe = real_describe
+            sqlite3.connect = real_connect
+            db.forget_network()
+            db._local.__dict__.clear()
 
     def test_the_database_folder_is_created_if_missing(self):
         db._local.__dict__.clear()

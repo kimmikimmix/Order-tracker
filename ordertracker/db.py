@@ -7,6 +7,7 @@ the entire system.
 
 import sqlite3
 import threading
+from pathlib import Path
 from datetime import datetime, timezone
 
 from . import config, drives
@@ -42,20 +43,118 @@ class StorageError(Exception):
     """The data folder exists but cannot hold the database."""
 
 
+def probe_folder(folder) -> dict:
+    """Find out what a folder will actually take, rather than guessing.
+
+    "Unable to open database file" covers several very different problems.
+    Distinguishing them takes two seconds and turns a list of possible
+    causes into a single answer.
+    """
+    folder = Path(folder)
+    found = {
+        "folder": str(folder),
+        "exists": False,
+        "made": "",
+        "file_ok": False,
+        "file_error": "",
+        "db_ok": False,
+        "db_error": "",
+        "network": False,
+        "where": "",
+    }
+
+    place = drives.describe(folder)
+    found["network"] = place["network"]
+    found["where"] = place["where"]
+
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        found["exists"] = folder.is_dir()
+    except OSError as exc:
+        found["made"] = str(exc)
+        return found
+
+    probe = folder / ".write-probe"
+    try:
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        found["file_ok"] = True
+    except OSError as exc:
+        found["file_error"] = str(exc)
+        return found
+
+    db_probe = folder / ".db-probe"
+    try:
+        conn = sqlite3.connect(db_probe, timeout=5)
+        conn.execute("CREATE TABLE IF NOT EXISTS probe (x INTEGER)")
+        conn.close()
+        found["db_ok"] = True
+    except sqlite3.Error as exc:
+        found["db_error"] = str(exc)
+    try:
+        db_probe.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return found
+
+
+CONTROLLED_FOLDER_ADVICE = (
+    "Ordinary files can be written there, but a database cannot. On Windows\n"
+    "that means something is watching the folder and refusing the kind of\n"
+    "file SQLite makes. In order of likelihood:\n"
+    "\n"
+    "  1. Controlled folder access — Windows Security > Virus & threat\n"
+    "     protection > Ransomware protection > Controlled folder access.\n"
+    "     Either turn it off, or Allow an app: add python.exe.\n"
+    "  2. Antivirus doing the same thing under its own name.\n"
+    "  3. OneDrive holding the folder online-only. Right-click it and\n"
+    "     choose Always keep on this device."
+)
+
+NO_FILES_ADVICE = (
+    "Files cannot be written there at all, so this is a permission on the\n"
+    "folder rather than anything about databases. Pick somewhere you own."
+)
+
+
 def _explain_open_failure(exc: Exception) -> "StorageError":
-    """Turn SQLite's terse refusal into something actionable."""
-    return StorageError(
-        f"Could not open the database at:\n    {config.DB_PATH}\n\n"
-        f"SQLite said: {exc}\n\n"
-        "The folder was created, so something is stopping files being made\n"
-        "inside it. On Windows this is usually ransomware protection\n"
-        "(Windows Security > Virus & threat protection > Controlled folder\n"
-        "access), OneDrive holding the folder online-only, or antivirus.\n\n"
-        "Run the check for a full report:\n"
-        "    py doctor.py\n\n"
-        "Or keep the data somewhere unrestricted:\n"
-        '    py run.py --demo --data "%LOCALAPPDATA%\\OrderTracker"'
-    )
+    """Turn SQLite's terse refusal into something actionable.
+
+    The folder is probed here and now, so the message can say what is
+    actually wrong instead of listing everything it might be.
+    """
+    found = probe_folder(config.DATA_DIR)
+    lines = [f"Could not open the database at:\n    {config.DB_PATH}",
+             f"SQLite said: {exc}"]
+
+    if found["made"]:
+        lines.append(f"The folder itself could not be created:\n    "
+                     f"{found['made']}")
+    elif not found["file_ok"]:
+        lines.append(f"Writing a plain file there fails too:\n    "
+                     f"{found['file_error']}\n\n{NO_FILES_ADVICE}")
+    elif found["db_ok"]:
+        lines.append(
+            "Oddly, a test database CAN be created there now. Something had\n"
+            "the folder locked a moment ago — antivirus scanning it, or a\n"
+            "copy of Order Tracker still shutting down. Try again.")
+    else:
+        lines.append(f"A test database is refused as well:\n    "
+                     f"{found['db_error']}\n\n{CONTROLLED_FOLDER_ADVICE}")
+
+    if found["network"]:
+        lines.append(
+            f"That folder is also on {found['where']}, a network drive.\n"
+            "SQLite cannot be relied on over one — keep the data on this\n"
+            "machine and back up to the share instead.")
+
+    lines.append(
+        "The quickest way past all of it is to keep your orders somewhere\n"
+        "unrestricted. This remembers the choice, so you only do it once:\n"
+        '\n    py setup.py --folder "%LOCALAPPDATA%\\OrderTracker"\n\n'
+        "For a full report of what was tried:\n    py doctor.py")
+
+    return StorageError("\n\n".join(lines))
 
 
 def connect() -> sqlite3.Connection:
