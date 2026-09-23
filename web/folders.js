@@ -301,6 +301,16 @@ async function openFolder(folderId) {
   setHash('folder/' + folderId);
   await loadInboxOrders();
 
+  // Emails that are not in any folder yet, so one can be pulled in from
+  // here as well as pushed from the inbox. Catching up on a conversation
+  // usually means starting from the folder, not from the tray.
+  let loose = [];
+  try {
+    loose = (await api('/api/mail?review=all')).mail
+      .filter(mail => !mail.thread_id)
+      .slice(0, 60);
+  } catch (err) { loose = []; }
+
   const kinds = S.boot.case_entry_kinds || ['NOTE'];
 
   modal(`${esc(folder.ref)} — ${esc(folder.company)}`, `
@@ -379,8 +389,19 @@ async function openFolder(folderId) {
     </div>
 
     <div class="mpane hidden" id="fpane-mail">
-      <div class="note">Emails filed in this folder. Add more from the INBOX —
-        open an email and choose this folder.</div>
+      <div class="filterbar" style="padding:0 0 8px">
+        <select id="ff-mail" style="min-width:420px">
+          <option value="">— an email to put in this folder —</option>
+          ${loose.map(mail => `<option value="${mail.id}">
+            ${esc(String(mail.sent_at || mail.filed_at || '').slice(0, 10))}
+            · ${esc(mail.from_name || mail.from_email || 'unknown')}
+            · ${esc((mail.subject || '(no subject)').slice(0, 60))}
+          </option>`).join('')}
+        </select>
+        <button class="btn" id="ff-add">ADD TO THIS FOLDER</button>
+      </div>
+      <div class="note">An email with no customer of its own takes this
+        folder's customer when you file it here. No order reference needed.</div>
       <div class="doclist" style="margin-top:8px">
         ${folder.emails.length ? folder.emails.map(mail => `
           <div class="docrow mailrow">
@@ -465,6 +486,17 @@ async function openFolder(folderId) {
       await api('/api/thread-entries/' + remove.dataset.delEntry, { method: 'DELETE' });
       openFolder(folderId);
     }
+  };
+
+  $('#ff-add').onclick = async () => {
+    const emailId = $('#ff-mail').value;
+    if (!emailId) { toast('Choose an email first', 'err'); return; }
+    try {
+      await postJSON(`/api/threads/${folderId}/emails`, { email_id: emailId });
+      toast('Added to the folder', 'ok');
+      openFolder(folderId);
+      reloadBoot(); refreshSaved();
+    } catch (err) { toast(err.message, 'err'); }
   };
 
   $('#fpane-mail').onclick = async event => {

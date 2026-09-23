@@ -196,8 +196,13 @@ def delete_entry(entry_id: int) -> None:
 def file_email(folder_id: int, email_id: int, actor: str = "") -> dict:
     """Put an email in the folder, and log it as having arrived or gone.
 
-    The mail keeps its place in the tray and against its order; the folder
-    is a second home for it, which is what a folder is for.
+    A mail that nobody could place — no order number, no sender we know,
+    passed on by a colleague halfway through — takes the folder's customer
+    as its own, because putting it in this folder is a person saying who it
+    is from. It is then settled: no order reference was needed.
+
+    A mail that already has a customer keeps it. The folder is a second
+    home for that one, not a reassignment.
     """
     conn = db.connect()
     folder = conn.execute("SELECT * FROM threads WHERE id = ?",
@@ -212,10 +217,32 @@ def file_email(folder_id: int, email_id: int, actor: str = "") -> dict:
     already = conn.execute(
         f"SELECT 1 FROM {LOG} WHERE thread_id = ? AND email_id = ?",
         (folder_id, email_id)).fetchone()
+
+    adopt = not mail["company_id"]
     with conn:
-        conn.execute("UPDATE emails SET thread_id = ? WHERE id = ?",
-                     (folder_id, email_id))
+        if adopt:
+            note = (f"filed into {folder['ref']} by hand"
+                    + (f" by {actor}" if actor else ""))
+            conn.execute(
+                """UPDATE emails SET thread_id = ?, company_id = ?,
+                                     needs_review = 0, confidence = 1.0,
+                                     matched_on = ?
+                   WHERE id = ?""",
+                (folder_id, folder["company_id"], note, email_id))
+        else:
+            conn.execute("UPDATE emails SET thread_id = ? WHERE id = ?",
+                         (folder_id, email_id))
         db.touch(conn)
+
+    if adopt and mail["doc_id"]:
+        # Keep the stored mail with the customer too, so it is findable
+        # from their paperwork and not only from the folder.
+        from . import documents
+        try:
+            documents.attach(mail["doc_id"], mail["order_id"],
+                             folder["company_id"])
+        except ValueError:
+            pass
     if not already:
         chase.add(LOG, folder_id, {
             "kind": "EMAIL OUT" if mail["direction"] == "OUT" else "EMAIL IN",

@@ -3320,3 +3320,81 @@ class TestSharedLog(unittest.TestCase):
         self.assertNotIn("only in the folder", case_log)
         self.assertIn("only in the folder", folder_log)
         self.assertNotIn("only in the case", folder_log)
+
+
+class TestFilingWithoutAnOrder(unittest.TestCase):
+    """An email nobody could place still has to end up somewhere.
+
+    Work arrives halfway through: a colleague forwards a thread, the
+    customer writes from an address nobody has seen, the subject line has
+    no reference in it. Putting that mail in a folder is a person saying
+    who it is from, and that has to be enough.
+    """
+
+    def setUp(self):
+        fresh_db()
+        self.company = orders.save_company({"name": "Sakura Denshi KK"})
+        self.folder = threads.open_folder({
+            "company": "Sakura Denshi KK",
+            "topic": "Sample request — 4 layer flex"}, actor="YJ")
+
+    def stray(self, subject="Fwd: the flex boards we discussed"):
+        return (f"From: Someone Else <nobody@unknown.example>\r\n"
+                f"To: sales@ourpcb.example\r\nSubject: {subject}\r\n"
+                "Date: Mon, 21 Sep 2026 09:30:00 +0900\r\n"
+                "Content-Type: text/plain; charset=\"utf-8\"\r\n\r\n"
+                "Passing this on — can you take it from here?\r\n").encode()
+
+    def test_a_mail_with_no_customer_takes_the_folders_one(self):
+        item = mail.intake("fwd.eml", self.stray())
+        self.assertIsNone(item["company_id"])
+        self.assertEqual(item["needs_review"], 1)
+
+        threads.file_email(self.folder, item["id"], actor="YJ")
+
+        filed = mail.get(item["id"])
+        self.assertEqual(filed["company_id"], self.company)
+        self.assertEqual(filed["thread_id"], self.folder)
+        self.assertEqual(filed["needs_review"], 0)
+        self.assertIsNone(filed["order_id"], "no order reference was needed")
+        self.assertIn("F-", filed["matched_on"])
+        self.assertIn("YJ", filed["matched_on"])
+
+    def test_the_stored_mail_goes_to_the_customer_too(self):
+        item = mail.intake("fwd.eml", self.stray())
+        threads.file_email(self.folder, item["id"])
+        document = documents.get(item["doc_id"])
+        self.assertEqual(document["company_id"], self.company)
+        self.assertIsNone(document["order_id"])
+
+    def test_a_mail_that_already_has_a_customer_keeps_it(self):
+        other = orders.save_company({
+            "name": "Northwind Industrial GmbH",
+            "contact_email": "haeun@northwind.example"})
+        raw = self.stray().replace(b"nobody@unknown.example",
+                                   b"haeun@northwind.example")
+        item = mail.intake("known.eml", raw)
+        self.assertEqual(item["company_id"], other)
+
+        threads.file_email(self.folder, item["id"])
+        filed = mail.get(item["id"])
+        self.assertEqual(filed["company_id"], other,
+                         "the folder is a second home, not a reassignment")
+        self.assertEqual(filed["thread_id"], self.folder)
+
+    def test_a_customer_can_be_set_without_an_order(self):
+        item = mail.intake("fwd.eml", self.stray())
+        mail.assign(item["id"], order_id=None, company_id=self.company)
+        filed = mail.get(item["id"])
+        self.assertEqual(filed["company_id"], self.company)
+        self.assertIsNone(filed["order_id"])
+        self.assertEqual(filed["needs_review"], 0)
+        self.assertEqual(documents.get(item["doc_id"])["company_id"],
+                         self.company)
+
+    def test_the_tray_says_which_folder_a_mail_is_in(self):
+        item = mail.intake("fwd.eml", self.stray())
+        threads.file_email(self.folder, item["id"])
+        listed = [m for m in mail.list_mail() if m["id"] == item["id"]][0]
+        self.assertTrue(listed["folder_ref"].startswith("F-"))
+        self.assertIn("Sample request", listed["folder_topic"])

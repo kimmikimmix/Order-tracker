@@ -135,8 +135,12 @@ function paintInbox() {
             <td><span class="chip k-${esc(item.category)}">${esc(item.category)}</span></td>
             <td>${item.order_no
                   ? `<a href="#order/${item.order_id}" class="ordlink">${esc(item.order_no)}</a>`
-                  : '<span class="subtle">no order</span>'}
-              <div class="subtle">${esc(item.company || 'no customer')}</div></td>
+                  : (item.folder_ref
+                      ? `<a href="#folder/${item.thread_id}" class="ordlink">${esc(item.folder_ref)}</a>`
+                      : '<span class="subtle">no order</span>')}
+              <div class="subtle">${esc(item.company || 'no customer')}
+                ${item.order_no && item.folder_ref
+                  ? '· ' + esc(item.folder_ref) : ''}</div></td>
             <td>${confidenceChip(item)}</td>
           </tr>`).join('')}
       </tbody>
@@ -232,9 +236,15 @@ async function openMail(mailId) {
   const allRefs = [...(refs.po || []), ...(refs.quote || []), ...(refs.codes || [])];
   const cases = (await api('/api/cases?open=1')).cases
     .filter(c => !item.order_id || c.order_id === item.order_id);
-  const folders = item.company_id
-    ? (await api('/api/threads?open=1&company_id=' + item.company_id)).folders
-    : [];
+  // Every open folder, not just this customer's: an email nobody could
+  // place is exactly the one that needs filing by hand, and it has no
+  // customer to look folders up by.
+  const folders = (await api('/api/threads?open=1')).folders;
+  const mine = folders.filter(f => f.company_id === item.company_id);
+  const others = folders.filter(f => f.company_id !== item.company_id);
+  const folderOption = f => `<option value="${f.id}"
+    ${String(item.thread_id) === String(f.id) ? 'selected' : ''}
+    >${esc(f.ref)} · ${esc(f.topic)}</option>`;
 
   modal(`EMAIL — ${esc(item.category || 'GENERAL')}`, `
     <div class="kv mailhead">
@@ -255,29 +265,44 @@ async function openMail(mailId) {
 
     <h2 class="sect">Where it was filed, and why</h2>
     <div class="formgrid">
+      <div class="lbl">CUSTOMER</div>
+      <div class="wide"><select id="mm-company">
+        <option value="">— no customer yet —</option>
+        ${(S.boot.companies || []).map(c => `<option value="${c.id}"
+          ${Number(item.company_id) === c.id ? 'selected' : ''}
+          >${esc(c.name)}</option>`).join('')}
+      </select></div>
       <div class="lbl">ORDER</div>
       <div class="wide"><select id="mm-order">${orderOptions(item.order_id)}</select></div>
     </div>
+    <div class="note">An order is not needed. A customer on their own is a
+      perfectly good place for an email to live.</div>
     <ul class="reasons">
       ${(item.reasons || []).map(r => `<li>${esc(r)}</li>`).join('')
         || '<li>filed by hand</li>'}
     </ul>
 
     <h2 class="sect">Keep it in a folder</h2>
-    ${item.company_id ? `
     <div class="filterbar" style="padding:0">
-      <select id="mm-folder" style="min-width:300px">
-        <option value="">— choose an open folder —</option>
-        ${folders.map(f => `<option value="${f.id}"
-          ${String(item.thread_id) === String(f.id) ? 'selected' : ''}
-          >${esc(f.ref)} · ${esc(f.topic)}</option>`).join('')}
+      <select id="mm-folder" style="min-width:340px">
+        <option value="">— choose a folder —</option>
+        ${mine.length ? `<optgroup label="${esc(item.company || 'this customer')}">
+          ${mine.map(folderOption).join('')}</optgroup>` : ''}
+        ${others.length ? `<optgroup label="${mine.length ? 'other customers'
+                                                         : 'every open folder'}">
+          ${others.map(folderOption).join('')}</optgroup>` : ''}
       </select>
       <button class="btn" id="mm-file">FILE IT IN</button>
       <button class="btn" id="mm-newfolder">START A FOLDER FROM THIS EMAIL</button>
     </div>
-    ${item.thread_id ? '<div class="note">Already filed in a folder.</div>' : ''}`
-    : '<div class="note">Give the email a customer first — a folder belongs '
-      + 'to one.</div>'}
+    ${item.folder_ref
+      ? `<div class="note">In folder <b>${esc(item.folder_ref)}</b> —
+         ${esc(item.folder_topic || '')}</div>`
+      : (item.company_id
+          ? ''
+          : `<div class="note">No order number, and nobody we recognise? File
+             it into a folder anyway — the email takes that folder's customer
+             as its own, and no order reference is needed.</div>`)}
 
     ${item.order_id ? `
     <h2 class="sect">Log it against a dispute</h2>
@@ -307,9 +332,11 @@ async function openMail(mailId) {
     { label: 'CLOSE', action: closeModal },
     { label: 'SAVE FILING', primary: true, action: async () => {
         const chosen = $('#mm-order').value;
+        const customer = $('#mm-company').value;
         try {
           await postJSON('/api/mail/' + mailId,
-                         { order_id: chosen || null, confirmed: true });
+                         { order_id: chosen || null,
+                           company_id: customer || null, confirmed: true });
           toast('Filed — and remembered for the next mail from this sender', 'ok');
           closeModal();
           loadInbox(); reloadBoot(); refreshSaved();
@@ -342,8 +369,12 @@ async function openMail(mailId) {
       const folderId = $('#mm-folder').value;
       if (!folderId) { toast('Choose a folder first', 'err'); return; }
       try {
-        await postJSON(`/api/threads/${folderId}/emails`, { email_id: item.id });
-        toast('Filed in the folder', 'ok');
+        const result = await postJSON(`/api/threads/${folderId}/emails`,
+                                      { email_id: item.id });
+        toast(item.company_id
+          ? 'Filed in ' + result.folder.ref
+          : 'Filed in ' + result.folder.ref + ' — and given to '
+            + result.folder.company, 'ok');
         closeModal();
         loadInbox(); reloadBoot();
       } catch (err) { toast(err.message, 'err'); }

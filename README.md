@@ -216,7 +216,17 @@ across. Each folder holds:
 
 Inside are two things. The **emails**, received and sent, filed together —
 open an email in the inbox and choose the folder, and it is logged as having
-arrived or gone. And the **log**: every call, meeting, note, decision and
+arrived or gone. It works the other way round too: inside a folder, pick any
+email that is not in one yet and add it.
+
+**No order reference is needed, and no recognised sender either.** Plenty of
+work arrives halfway through — a colleague forwards a thread, or the customer
+writes from an address nobody has seen. Put that mail in a folder and it
+takes the folder's customer as its own, and is done with: the email is filed,
+the reason is recorded ("filed into F-2026-001 by hand"), and it leaves the
+tray. A mail that already has a customer keeps it; the folder is a second
+home for that one, not a reassignment. An email can also simply be given a
+customer with no order at all, on the same screen. And the **log**: every call, meeting, note, decision and
 action, each with its date, never overwritten. Any entry can carry a
 follow-up date, and those appear on the FOLDERS page and the dashboard,
 turning red when they pass.
@@ -737,7 +747,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 263 tests, no dependencies
+python3 -m unittest discover tests     # 268 tests, no dependencies
 ```
 
 The pieces:

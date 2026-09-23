@@ -642,10 +642,12 @@ def intake(filename: str, data: bytes, order_id=None, actor="") -> dict:
 
 def get(mail_id: int) -> dict | None:
     row = db.connect().execute(
-        """SELECT e.*, o.order_no, c.name AS company
+        """SELECT e.*, o.order_no, c.name AS company,
+                  t.ref AS folder_ref, t.topic AS folder_topic
            FROM emails e
            LEFT JOIN orders o ON o.id = e.order_id
            LEFT JOIN companies c ON c.id = e.company_id
+           LEFT JOIN threads t ON t.id = e.thread_id
            WHERE e.id = ?""", (mail_id,)).fetchone()
     if row is None:
         return None
@@ -657,10 +659,12 @@ def get(mail_id: int) -> dict | None:
 
 def list_mail(needs_review=None, order_id=None, company_id=None,
               category=None, query=None, limit=300) -> list[dict]:
-    sql = ["""SELECT e.*, o.order_no, c.name AS company
+    sql = ["""SELECT e.*, o.order_no, c.name AS company,
+                     t.ref AS folder_ref, t.topic AS folder_topic
               FROM emails e
               LEFT JOIN orders o ON o.id = e.order_id
-              LEFT JOIN companies c ON c.id = e.company_id"""]
+              LEFT JOIN companies c ON c.id = e.company_id
+              LEFT JOIN threads t ON t.id = e.thread_id"""]
     where, params = [], []
     if needs_review is not None:
         where.append("e.needs_review = ?")
@@ -718,7 +722,7 @@ def assign(mail_id: int, order_id=None, company_id=None, confirmed=True) -> dict
 
     if mail["doc_id"]:
         try:
-            documents.attach(mail["doc_id"], order_id)
+            documents.attach(mail["doc_id"], order_id, company_id)
         except ValueError:
             pass
     return get(mail_id)

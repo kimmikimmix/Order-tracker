@@ -198,10 +198,14 @@ def autofile(doc_id: int) -> int | None:
     return order_id
 
 
-def attach(doc_id: int, order_id) -> None:
-    """File (or unfile, with order_id None) a document against an order."""
+def attach(doc_id: int, order_id, company_id=None) -> None:
+    """File a document against an order, or against a customer alone.
+
+    Plenty of paperwork arrives before anybody knows which order it is
+    for — and some of it never belongs to one. Filing it under the
+    customer keeps it findable instead of leaving it in the loose tray.
+    """
     conn = db.connect()
-    company_id = None
     if order_id:
         row = conn.execute(
             "SELECT company_id FROM orders WHERE id = ?", (order_id,)
