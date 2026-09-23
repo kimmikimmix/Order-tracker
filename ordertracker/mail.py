@@ -640,6 +640,45 @@ def intake(filename: str, data: bytes, order_id=None, actor="") -> dict:
     return get(cursor.lastrowid)
 
 
+DIRECTIONS = ("IN", "OUT")
+
+
+def set_direction(mail_id: int, direction: str) -> dict:
+    """Say by hand whether a mail came in or went out.
+
+    The guess is made from your own addresses, which cannot know about a
+    mail a colleague forwarded on, or one saved from the Sent folder of
+    somebody else's mailbox. A person saying so settles it — and the
+    folders and cases it has been logged in are corrected with it, so the
+    log never says "received" about something you sent.
+    """
+    wanted = str(direction or "").strip().upper()
+    if wanted in ("SENT", "OUTGOING"):
+        wanted = "OUT"
+    if wanted in ("RECEIVED", "INCOMING"):
+        wanted = "IN"
+    if wanted not in DIRECTIONS:
+        raise ValueError("A mail is either IN or OUT.")
+
+    conn = db.connect()
+    row = conn.execute("SELECT id FROM emails WHERE id = ?",
+                       (mail_id,)).fetchone()
+    if row is None:
+        raise ValueError("That email is not on file.")
+
+    entry_kind = f"EMAIL {wanted}"
+    with conn:
+        conn.execute("UPDATE emails SET direction = ? WHERE id = ?",
+                     (wanted, mail_id))
+        for table in ("thread_entries", "case_entries"):
+            conn.execute(
+                f"""UPDATE {table} SET kind = ?
+                    WHERE email_id = ? AND kind IN ('EMAIL IN', 'EMAIL OUT')""",
+                (entry_kind, mail_id))
+        db.touch(conn)
+    return get(mail_id)
+
+
 def get(mail_id: int) -> dict | None:
     row = db.connect().execute(
         """SELECT e.*, o.order_no, c.name AS company,
@@ -658,7 +697,8 @@ def get(mail_id: int) -> dict | None:
 
 
 def list_mail(needs_review=None, order_id=None, company_id=None,
-              category=None, query=None, limit=300) -> list[dict]:
+              category=None, direction=None, query=None,
+              limit=300) -> list[dict]:
     sql = ["""SELECT e.*, o.order_no, c.name AS company,
                      t.ref AS folder_ref, t.topic AS folder_topic
               FROM emails e
@@ -678,6 +718,9 @@ def list_mail(needs_review=None, order_id=None, company_id=None,
     if category:
         where.append("e.category = ?")
         params.append(category)
+    if direction:
+        where.append("e.direction = ?")
+        params.append(str(direction).upper())
     if query:
         where.append("(e.subject LIKE ? OR e.from_email LIKE ? "
                      "OR e.summary LIKE ? OR e.from_name LIKE ?)")

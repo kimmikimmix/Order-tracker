@@ -3398,3 +3398,78 @@ class TestFilingWithoutAnOrder(unittest.TestCase):
         listed = [m for m in mail.list_mail() if m["id"] == item["id"]][0]
         self.assertTrue(listed["folder_ref"].startswith("F-"))
         self.assertIn("Sample request", listed["folder_topic"])
+
+
+class TestWhichWayTheMailWent(unittest.TestCase):
+    """IN or OUT, guessed at first and said by hand afterwards."""
+
+    def setUp(self):
+        fresh_db()
+        prefs.save({"my_addresses": ["yj@ourpcb.example"]})
+        self.company = orders.save_company({
+            "name": "Sakura Denshi KK",
+            "contact_email": "sato@sakura-denshi.example"})
+
+    def tearDown(self):
+        prefs.save({"my_addresses": []})
+
+    def letter(self, sender="sato@sakura-denshi.example", subject="Hello"):
+        return (f"From: {sender}\r\nTo: someone@example.com\r\n"
+                f"Subject: {subject}\r\n"
+                "Date: Mon, 21 Sep 2026 09:30:00 +0900\r\n"
+                "Content-Type: text/plain; charset=\"utf-8\"\r\n\r\n"
+                "The body of it.\r\n").encode()
+
+    def test_one_of_your_own_addresses_means_it_went_out(self):
+        item = mail.intake("sent.eml", self.letter(sender="yj@ourpcb.example"))
+        self.assertEqual(item["direction"], "OUT")
+
+    def test_anything_else_is_taken_as_coming_in(self):
+        item = mail.intake("in.eml", self.letter())
+        self.assertEqual(item["direction"], "IN")
+
+    def test_it_can_be_relabelled_by_hand(self):
+        item = mail.intake("fwd.eml", self.letter())
+        self.assertEqual(item["direction"], "IN")
+        mail.set_direction(item["id"], "OUT")
+        self.assertEqual(mail.get(item["id"])["direction"], "OUT")
+        mail.set_direction(item["id"], "RECEIVED")
+        self.assertEqual(mail.get(item["id"])["direction"], "IN")
+
+    def test_anything_that_is_not_a_direction_is_refused(self):
+        item = mail.intake("x.eml", self.letter())
+        for wrong in ("sideways", "", None, "INOUT"):
+            with self.assertRaises(ValueError):
+                mail.set_direction(item["id"], wrong)
+        self.assertEqual(mail.get(item["id"])["direction"], "IN")
+
+    def test_relabelling_corrects_the_folder_log(self):
+        folder = threads.open_folder({"company": "Sakura Denshi KK",
+                                      "topic": "the conversation"})
+        item = mail.intake("m.eml", self.letter(subject="Quotation attached"))
+        threads.file_email(folder, item["id"])
+        kinds = [e["kind"] for e in threads.get_folder(folder)["entries"]]
+        self.assertIn("EMAIL IN", kinds)
+
+        mail.set_direction(item["id"], "OUT")
+        kinds = [e["kind"] for e in threads.get_folder(folder)["entries"]]
+        self.assertIn("EMAIL OUT", kinds)
+        self.assertNotIn("EMAIL IN", kinds)
+
+    def test_relabelling_leaves_the_filing_alone(self):
+        order = orders.create_order({"company": "Sakura Denshi KK",
+                                     "order_no": "OT-1", "status": "CONFIRMED"})
+        item = mail.intake("m.eml", self.letter())
+        mail.assign(item["id"], order_id=order)
+        mail.set_direction(item["id"], "OUT")
+        filed = mail.get(item["id"])
+        self.assertEqual(filed["order_id"], order)
+        self.assertEqual(filed["needs_review"], 0)
+
+    def test_the_tray_can_be_narrowed_to_one_direction(self):
+        mail.intake("a.eml", self.letter(subject="first"))
+        out = mail.intake("b.eml", self.letter(subject="second"))
+        mail.set_direction(out["id"], "OUT")
+        self.assertEqual(len(mail.list_mail(direction="IN")), 1)
+        self.assertEqual(len(mail.list_mail(direction="OUT")), 1)
+        self.assertEqual(len(mail.list_mail()), 2)

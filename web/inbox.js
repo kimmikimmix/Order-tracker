@@ -11,7 +11,7 @@
 const MAIL = {
   items: [],
   tray: { total: 0, needs_review: 0, unfiled: 0, by_category: {} },
-  filter: { review: 'all', category: '', q: '' },
+  filter: { review: 'all', category: '', direction: '', q: '' },
   orders: null,            // filled the first time a mail needs filing
 };
 
@@ -22,6 +22,14 @@ function mailWhen(item) {
 
 function mailWho(item) {
   return item.from_name || item.from_email || 'unknown sender';
+}
+
+/* Which way the mail went. The guess is from your own addresses; a person
+   can say otherwise, and then it stays said. */
+function directionChip(item) {
+  return item.direction === 'OUT'
+    ? '<span class="chip dir-out">SENT</span>'
+    : '<span class="chip dir-in">IN</span>';
 }
 
 function confidenceChip(item) {
@@ -59,6 +67,7 @@ async function loadInbox() {
   const query = new URLSearchParams();
   if (MAIL.filter.review !== 'all') query.set('review', MAIL.filter.review);
   if (MAIL.filter.category) query.set('category', MAIL.filter.category);
+  if (MAIL.filter.direction) query.set('direction', MAIL.filter.direction);
   if (MAIL.filter.q) query.set('q', MAIL.filter.q);
 
   try {
@@ -106,6 +115,11 @@ function paintInbox() {
             ${esc(c)}${MAIL.tray.by_category[c] ? ' (' + MAIL.tray.by_category[c] + ')' : ''}
           </option>`).join('')}
       </select>
+      <select id="m-dir">
+        <option value="">in and out</option>
+        <option value="IN" ${f.direction === 'IN' ? 'selected' : ''}>received</option>
+        <option value="OUT" ${f.direction === 'OUT' ? 'selected' : ''}>sent</option>
+      </select>
       <input id="m-q" placeholder="sender, subject or summary…" value="${esc(f.q)}"
              style="width:260px">
       <span class="spacer"></span>
@@ -126,7 +140,7 @@ function paintInbox() {
         ${MAIL.items.map(item => `
           <tr data-mail="${item.id}" class="${item.needs_review ? 'needsreview' : ''}">
             <td style="color:var(--dim)">${esc(mailWhen(item))}</td>
-            <td>${esc(mailWho(item))}
+            <td>${directionChip(item)} ${esc(mailWho(item))}
               <div class="subtle">${esc(item.from_email || '')}</div></td>
             <td><b>${esc(item.subject || '(no subject)')}</b>
               <div class="subtle">${esc(item.summary || 'nothing readable in the body')}</div>
@@ -155,6 +169,10 @@ function paintInbox() {
   $('#m-refresh').onclick = loadInbox;
   $('#m-cat').onchange = event => {
     MAIL.filter.category = event.target.value;
+    loadInbox();
+  };
+  $('#m-dir').onchange = event => {
+    MAIL.filter.direction = event.target.value;
     loadInbox();
   };
   let typing = null;
@@ -254,6 +272,16 @@ async function openMail(mailId) {
       <div class="k">TO</div><div class="v">${esc(item.to_addrs || '—')}</div>
       <div class="k">SENT</div>
       <div class="v">${esc(mailWhen(item))} UTC</div>
+      <div class="k">WHICH WAY</div>
+      <div class="v">
+        <button class="btn ${item.direction === 'OUT' ? '' : 'primary'}"
+                data-dir="IN">RECEIVED</button>
+        <button class="btn ${item.direction === 'OUT' ? 'primary' : ''}"
+                data-dir="OUT">SENT</button>
+        <span class="note">${item.direction === 'OUT'
+          ? 'treated as one you sent'
+          : 'treated as one that came in'} — change it if that is wrong</span>
+      </div>
       <div class="k">SUBJECT</div><div class="v"><b>${esc(item.subject || '')}</b></div>
     </div>
 
@@ -364,6 +392,20 @@ async function openMail(mailId) {
       } catch (err) { toast(err.message, 'err'); }
     };
   }
+  $$('#modal [data-dir]').forEach(button => {
+    button.onclick = async () => {
+      const wanted = button.dataset.dir;
+      if (wanted === (item.direction || 'IN')) return;
+      try {
+        await postJSON('/api/mail/' + mailId, { direction: wanted });
+        toast(wanted === 'OUT' ? 'Labelled as sent' : 'Labelled as received',
+              'ok');
+        loadInbox();
+        openMail(mailId);        // redrawn, so the folder log reads right too
+      } catch (err) { toast(err.message, 'err'); }
+    };
+  });
+
   if ($('#mm-file')) {
     $('#mm-file').onclick = async () => {
       const folderId = $('#mm-folder').value;

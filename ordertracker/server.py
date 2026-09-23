@@ -328,6 +328,7 @@ def api_mail_list(handler, match):
             order_id=_int_or_none(q.get("order_id")),
             company_id=_int_or_none(q.get("company_id")),
             category=q.get("category") or None,
+            direction=q.get("direction") or None,
             query=q.get("q") or None),
         "tray": mail.tray(),
     }
@@ -366,15 +367,25 @@ def api_mail_detail(handler, match):
 
 @route("POST", r"/api/mail/(\d+)")
 def api_mail_assign(handler, match):
+    """Change where a mail is filed, which way it went, or both.
+
+    Kept as one route but two separate decisions: relabelling a mail as
+    sent must not disturb the order it is filed against, and refiling it
+    must not change which way it went.
+    """
+    mail_id = int(match.group(1))
     data = handler.json_body()
     try:
-        return {"ok": True, "mail": mail.assign(
-            int(match.group(1)),
-            order_id=_int_or_none(data.get("order_id")),
-            company_id=_int_or_none(data.get("company_id")),
-            confirmed=bool(data.get("confirmed", True)))}
+        if data.get("direction"):
+            mail.set_direction(mail_id, data["direction"])
+        if {"order_id", "company_id", "confirmed"} & set(data):
+            mail.assign(mail_id,
+                        order_id=_int_or_none(data.get("order_id")),
+                        company_id=_int_or_none(data.get("company_id")),
+                        confirmed=bool(data.get("confirmed", True)))
     except ValueError as exc:
         raise ApiError(str(exc)) from exc
+    return {"ok": True, "mail": mail.get(mail_id)}
 
 
 @route("DELETE", r"/api/mail/(\d+)")

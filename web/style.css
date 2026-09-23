@@ -770,3 +770,5 @@ a.ordlink:hover { text-decoration: underline; }
                  gap: 3px 10px; font-size: 11px; }
 .topicbox .tkv .k { color: var(--dimmer); font-size: 10px; letter-spacing: .5px; }
 .topicbox .tkv .v { color: var(--dim); }
+.chip.dir-in  { color: var(--blue);  border-color:#1d3a56; background:#0f1a26; }
+.chip.dir-out { color: var(--green); border-color:#1f4e33; background:#0c1d14; }

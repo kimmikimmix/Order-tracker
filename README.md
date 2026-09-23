@@ -193,7 +193,13 @@ are left out. The mail itself is stored too, so it stays searchable and can
 be opened again exactly as it arrived.
 
 Set your own addresses under SETUP → EMAIL INTAKE and mail you sent is marked
-as going out rather than coming in. The confidence needed to file without
+as going out rather than coming in. That is only a guess — it cannot know
+about a message a colleague forwarded on, or one saved out of somebody
+else's Sent folder — so every email carries a **RECEIVED / SENT** switch you
+can set by hand, and the tray can be narrowed to one direction. Relabelling
+one corrects the folders and cases it has been logged in, so a log never
+says "received" about something you sent, and it never disturbs where the
+email is filed. The confidence needed to file without
 asking is set there too.
 
 ## Folders: everything that is not an order yet
@@ -747,7 +753,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 268 tests, no dependencies
+python3 -m unittest discover tests     # 275 tests, no dependencies
 ```
 
 The pieces:
