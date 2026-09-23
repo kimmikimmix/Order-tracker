@@ -102,6 +102,25 @@ def safe_name(filename: str) -> str:
     return f"{stem}{suffix}"
 
 
+def ascii_name(filename: str) -> str:
+    """A plain-ASCII stand-in for a name, keeping the extension.
+
+    Nothing reads this: it is the fallback in a download header, for the
+    benefit of anything too old to understand the real name beside it.
+    A Korean name leaves nothing behind, so the extension carries it.
+    """
+    name = safe_name(filename)
+    stem, dot, extension = name.rpartition(".")
+    if not dot or not stem:
+        stem, extension = name, ""
+    # Drop anything a header cannot hold, and the quote that would end it.
+    stem = "".join(ch for ch in stem if 32 <= ord(ch) < 127 and ch != '"')
+    stem = stem.strip(" .") or "file"
+    extension = "".join(ch for ch in extension
+                        if 32 <= ord(ch) < 127 and ch != '"').strip(" .")
+    return f"{stem}.{extension}" if extension else stem
+
+
 def store(filename: str, data: bytes, order_id=None, company_id=None,
           kind=None) -> dict:
     """Save an uploaded file, index its text and return the document row."""

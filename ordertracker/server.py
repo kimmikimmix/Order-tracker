@@ -320,6 +320,20 @@ def api_attach_remove(handler, match):
     return {"ok": True}
 
 
+def _disposition(kind: str, filename: str) -> str:
+    """A Content-Disposition value that survives a Korean filename.
+
+    An HTTP header can only carry latin-1, and a name in Hangul is not
+    latin-1 — put one in raw and the whole response dies after the status
+    line, which the browser shows as a broken image. So the real name goes
+    in the RFC 5987 form, percent-encoded and marked UTF-8, and a plain
+    ASCII stand-in goes in the old form beside it.
+    """
+    plain = documents.ascii_name(filename)
+    encoded = urllib.parse.quote(documents.safe_name(filename), safe="")
+    return f"{kind}; filename=\"{plain}\"; filename*=UTF-8\'\'{encoded}"
+
+
 @route("GET", r"/api/documents/(\d+)/file")
 def api_document_file(handler, match):
     doc = documents.get(int(match.group(1)))
@@ -343,12 +357,10 @@ def api_document_file(handler, match):
         if mime not in safe_inline:
             mime = "application/octet-stream"
 
-    filename = doc["filename"].replace('"', "")
     handler.send_bytes(
         data, mime,
         extra_headers={
-            "Content-Disposition":
-                f'{disposition}; filename="{documents.safe_name(filename)}"',
+            "Content-Disposition": _disposition(disposition, doc["filename"]),
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -1020,7 +1032,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         for key, value in (extra_headers or {}).items():
-            self.send_header(key, value)
+            # A header holds latin-1 and nothing else. Anything that slips
+            # through goes out escaped rather than raising halfway
+            # through a reply, which would leave the browser with a
+            # successful status and an empty body.
+            text = str(value)
+            try:
+                text.encode("latin-1")
+            except UnicodeEncodeError:
+                text = text.encode("ascii", "backslashreplace").decode("ascii")
+            self.send_header(key, text)
         self.end_headers()
         try:
             self.wfile.write(body)

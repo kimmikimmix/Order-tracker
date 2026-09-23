@@ -431,6 +431,31 @@ class TestDocuments(unittest.TestCase):
             with self.subTest(given=given):
                 self.assertEqual(documents.safe_name(given), expected)
 
+    def test_a_non_latin_name_can_still_be_opened(self):
+        """A header holds latin-1 only; a Korean name has to be encoded.
+
+        Put one in raw and the reply dies after the status line, which
+        the browser shows as a broken image — with the name that broke it
+        underneath, as the alt text.
+        """
+        from ordertracker.server import _disposition
+        value = _disposition("inline", "스크린샷 2026-09-23 151349.png")
+        value.encode("latin-1")                    # the real bug, in one line
+        self.assertIn("filename*=UTF-8\'\'", value)
+        self.assertIn("%EC%8A%A4", value, "the real name, percent-encoded")
+        self.assertIn('filename="2026-09-23 151349.png"', value)
+
+    def test_the_plain_stand_in_name_keeps_the_extension(self):
+        self.assertEqual(documents.ascii_name("발주서.eml"), "file.eml")
+        self.assertEqual(documents.ascii_name("사진.jpg"), "file.jpg")
+        self.assertEqual(documents.ascii_name("defect.png"), "defect.png")
+        self.assertEqual(documents.ascii_name("주문서 PO-44817.pdf"),
+                         "PO-44817.pdf")
+        for awkward in ("\"quoted\".png", "line\nbreak.png", ""):
+            with self.subTest(given=awkward):
+                documents.ascii_name(awkward).encode("ascii")
+                self.assertNotIn('"', documents.ascii_name(awkward))
+
     def test_awkward_filenames_are_made_safe(self):
         self.assertEqual(documents.safe_name("../../etc/passwd"), "passwd")
         self.assertEqual(documents.safe_name(r"C:\evil\path.pdf"), "path.pdf")
@@ -698,6 +723,32 @@ class TestHttpApi(unittest.TestCase):
         line = [h for h in order["history"] if h["by_hand"]][0]
         self.assertEqual([a["filename"] for a in line["attachments"]],
                          ["edge.png"])
+
+    def test_a_korean_named_file_comes_back_whole(self):
+        """The bug that showed as a broken thumbnail, end to end."""
+        name = "스크린샷 2026-09-23 151349.png"
+        pixels = b"\x89PNG\r\n\x1a\n and some bytes"
+        boundary = "----T3"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="files";'
+            f' filename="{name}"\r\n'
+            "Content-Type: image/png\r\n\r\n"
+        ).encode() + pixels + f"\r\n--{boundary}--\r\n".encode()
+
+        request = urllib.request.Request(
+            self.base + "/api/documents/upload", data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+        with urllib.request.urlopen(request) as response:
+            saved = json.loads(response.read())["saved"][0]
+        self.assertEqual(saved["filename"], name)
+
+        with urllib.request.urlopen(
+                self.base + f"/api/documents/{saved['id']}/file") as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.read(), pixels)
+            disposition = response.headers["Content-Disposition"]
+        self.assertIn("filename*=UTF-8\'\'", disposition)
 
     def test_a_write_from_another_site_is_refused(self):
         """A page on some other site must not be able to change anything."""
