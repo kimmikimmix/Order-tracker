@@ -3043,85 +3043,6 @@ class TestSomethingToDoubleClick(unittest.TestCase):
         self.assertIn("the desktop refused it", str(caught.exception))
 
 
-class TestUpdatingOneCopyFromAnother(unittest.TestCase):
-    """`run.py --update-to`: new program, same orders.
-
-    The copy that gets used lives where git cannot reach it, so this is the
-    only way it ever sees a change. It has to be impossible for it to cost
-    somebody their order book.
-    """
-
-    def setUp(self):
-        from ordertracker import relocate
-        self.relocate = relocate
-        self.holder = Path(tempfile.mkdtemp(prefix="ot-update-"))
-        self.new = self.holder / "new"
-        self.old = self.holder / "old"
-        for folder in (self.new, self.old):
-            (folder / "ordertracker").mkdir(parents=True)
-            (folder / "web").mkdir()
-            (folder / "run.py").write_text("# the app\n", encoding="utf-8")
-            (folder / "ordertracker" / "db.py").write_text("old\n",
-                                                           encoding="utf-8")
-        (self.new / "run.py").write_text("# the newer app\n", encoding="utf-8")
-        (self.new / "ordertracker" / "db.py").write_text("new\n",
-                                                         encoding="utf-8")
-        (self.new / "ordertracker" / "mail.py").write_text("new file\n",
-                                                           encoding="utf-8")
-
-        # What the old copy must keep.
-        (self.old / "data").mkdir()
-        (self.old / "data" / "orders.db").write_bytes(b"not really a database")
-        (self.old / "data" / "documents").mkdir()
-        (self.old / "data" / "documents" / "po.pdf").write_bytes(b"%PDF")
-        (self.old / "settings.json").write_text(
-            '{"welcome_name": "김영진"}', encoding="utf-8")
-        (self.old / "portable.txt").write_text("portable", encoding="utf-8")
-
-    def tearDown(self):
-        shutil.rmtree(self.holder, ignore_errors=True)
-
-    def test_the_program_is_replaced(self):
-        done = self.relocate.update_app(self.new, self.old)
-        self.assertEqual((self.old / "run.py").read_text(), "# the newer app\n")
-        self.assertEqual((self.old / "ordertracker" / "db.py").read_text(), "new\n")
-        self.assertTrue((self.old / "ordertracker" / "mail.py").exists())
-        # run.py, db.py and mail.py — the empty web folder has nothing in it.
-        self.assertEqual(done["files"], 3)
-
-    def test_the_orders_and_settings_are_left_alone(self):
-        self.relocate.update_app(self.new, self.old)
-        self.assertEqual((self.old / "data" / "orders.db").read_bytes(),
-                         b"not really a database")
-        self.assertTrue((self.old / "data" / "documents" / "po.pdf").exists())
-        self.assertIn("김영진", (self.old / "settings.json").read_text("utf-8"))
-        self.assertTrue((self.old / "portable.txt").exists())
-
-    def test_it_refuses_a_source_that_is_not_the_app(self):
-        with self.assertRaises(self.relocate.MoveError) as caught:
-            self.relocate.update_app(self.holder, self.old)
-        self.assertIn("does not look like", str(caught.exception))
-
-    def test_it_refuses_to_update_a_folder_from_itself(self):
-        with self.assertRaises(self.relocate.MoveError):
-            self.relocate.update_app(self.new, self.new)
-
-    def test_it_refuses_to_fill_someone_elses_folder(self):
-        stranger = self.holder / "my documents"
-        stranger.mkdir()
-        (stranger / "tax return.xlsx").write_bytes(b"mine")
-        with self.assertRaises(self.relocate.MoveError) as caught:
-            self.relocate.update_app(self.new, stranger)
-        self.assertIn("not an Order Tracker folder", str(caught.exception))
-
-    def test_an_empty_folder_is_a_fine_place_to_put_it(self):
-        fresh = self.holder / "fresh"
-        self.relocate.update_app(self.new, fresh)
-        self.assertTrue((fresh / "run.py").exists())
-
-
-# ------------------------------------------------------------ the folders
-
 class TestFolders(unittest.TestCase):
     """A folder per running conversation with a customer."""
 
@@ -3473,3 +3394,115 @@ class TestWhichWayTheMailWent(unittest.TestCase):
         self.assertEqual(len(mail.list_mail(direction="IN")), 1)
         self.assertEqual(len(mail.list_mail(direction="OUT")), 1)
         self.assertEqual(len(mail.list_mail()), 2)
+
+
+class TestTheUpdateScript(unittest.TestCase):
+    """update.bat is what actually updates the copy people use.
+
+    It cannot be run from here, so what is checked is the thing that would
+    cost somebody their order book: what it copies, what it leaves alone,
+    and that it never deletes.
+    """
+
+    def setUp(self):
+        self.script = ROOT / "update.bat"
+        self.text = self.script.read_bytes().decode("utf-8")
+
+    def test_it_is_there_and_windows_can_read_it(self):
+        self.assertTrue(self.script.is_file())
+        # cmd.exe reads a batch file line by line and needs CRLF endings:
+        # every newline in it has to be preceded by a carriage return.
+        raw = self.script.read_bytes()
+        self.assertIn(b"\r\n", raw)
+        self.assertEqual(raw.count(b"\n"), raw.count(b"\r\n"))
+
+    def commands(self):
+        """The lines that do something, with the remarks left out."""
+        return [line for line in self.text.upper().splitlines()
+                if not line.strip().startswith("REM")]
+
+    def test_it_never_deletes_anything(self):
+        """Without /MIR or /PURGE, robocopy only adds and replaces."""
+        for line in self.commands():
+            for dangerous in ("/MIR", "/PURGE", "DEL ", "RMDIR", "RD /"):
+                self.assertNotIn(dangerous, line,
+                                 f"{dangerous} could remove somebody's work")
+
+    def test_everything_of_the_users_is_left_out_of_the_copy(self):
+        for mine in ("data", "demo-data", ".git", "settings.json",
+                     "portable.txt", "*.db", "*.db-wal", "*.db-shm",
+                     "__pycache__"):
+            self.assertIn(mine, self.text,
+                          f"{mine} must be excluded from the copy")
+
+    def test_it_refuses_a_destination_that_is_not_the_app(self):
+        self.assertIn("Refusing to write into it", self.text)
+        self.assertIn('if not exist "%DST%\\run.py"', self.text)
+
+    def test_it_runs_from_a_copy_of_itself(self):
+        """Fetching a new version of this very file mid-run must not
+        confuse the interpreter reading it."""
+        self.assertIn("--child", self.text)
+        self.assertIn("%TEMP%", self.text)
+
+    def test_the_program_files_it_carries_are_the_ones_that_matter(self):
+        """A copy that left out a module would break the app on arrival."""
+        self.assertIn("/E", self.text)          # the whole tree, subfolders too
+        for needed in ("ordertracker", "web"):
+            self.assertTrue((ROOT / needed).is_dir())
+            self.assertNotIn(f'"%SRC%\\{needed}"', self.text,
+                             f"{needed} must NOT be excluded")
+
+    def robocopy_arguments(self):
+        """The /XD and /XF lists, read out of the script as written."""
+        import re
+        line = " ".join(l.strip().rstrip("^").strip()
+                        for l in self.text.splitlines()
+                        if l.strip().upper().startswith("ROBOCOPY")
+                        or l.strip().startswith("/X")
+                        or l.strip().startswith("/NFL"))
+        folders = re.search(r"/XD (.*?) /XF", line).group(1)
+        files = re.search(r"/XF (.*?) /NFL", line).group(1)
+        strip = lambda text: [t.strip('"').rsplit("\\", 1)[-1]
+                              for t in re.findall(r'"[^"]+"|\S+', text)]
+        return strip(folders), strip(files)
+
+    def test_applying_its_exclusions_to_this_very_folder_keeps_the_app(self):
+        """Run the script's own lists over the real tree.
+
+        The failure this guards against is the one that matters: an
+        exclusion that quietly swallows part of the program, or one that
+        misses a folder holding somebody's orders.
+        """
+        import fnmatch
+        skip_folders, skip_files = self.robocopy_arguments()
+
+        copied, left = [], []
+        for path in ROOT.rglob("*"):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(ROOT)
+            excluded = (
+                any(part in skip_folders for part in relative.parts[:-1])
+                or any(fnmatch.fnmatch(relative.name, pattern)
+                       for pattern in skip_files))
+            (left if excluded else copied).append(relative.as_posix())
+
+        self.assertIn("run.py", copied)
+        self.assertIn("ordertracker/mail.py", copied)
+        self.assertIn("ordertracker/extract/pdf.py", copied)
+        self.assertIn("web/folders.js", copied)
+        self.assertIn("web/style.css", copied)
+        self.assertIn("update.bat", copied)
+
+        for kept_back in left:
+            self.assertFalse(
+                kept_back.startswith(("ordertracker/", "web/", "assets/"))
+                and not kept_back.endswith((".pyc", ".db")),
+                f"{kept_back} is part of the app and must be copied")
+
+        self.assertTrue(any(name.startswith("data/") for name in left)
+                        or not (ROOT / "data").exists(),
+                        "the data folder must be left alone")
+        self.assertNotIn("settings.json", copied)
+        self.assertNotIn("portable.txt", copied)

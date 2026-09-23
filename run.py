@@ -7,8 +7,6 @@
     python3 run.py --reindex    re-read every stored document, then start
     python3 run.py --no-backup  start without taking the usual backup copy
     python3 run.py --here       keep everything in this folder from now on
-    python3 run.py --update-to FOLDER    write this app over the copy there
-    python3 run.py --update-from FOLDER  fetch the app from a copy there
 
 Nothing here needs installing: it runs on a stock Python 3.10 or newer.
 """
@@ -90,40 +88,9 @@ def main(argv=None):
                         help="keep the orders, documents and settings in this "
                              "folder from now on, and start (use this after "
                              "copying the folder to another drive by hand)")
-    parser.add_argument("--update-to", metavar="FOLDER",
-                        help="copy this app's program files over another copy "
-                             "of it, leaving that copy's orders, documents "
-                             "and settings untouched")
-    parser.add_argument("--update-from", metavar="FOLDER",
-                        help="the same the other way round: refresh this "
-                             "copy's program files from another one")
     parser.add_argument("--where", action="store_true",
                         help="print where the data is kept, then exit")
     args = parser.parse_args(argv)
-
-    # Updating one copy from another. This is how the copy that actually
-    # gets used stays current: it lives on a drive git cannot reach, so the
-    # machine that can pull writes the new files across. Neither side's
-    # orders are touched, so it is safe to run either way round.
-    if args.update_to or args.update_from:
-        from ordertracker import relocate
-        here = config.BASE_DIR.resolve()
-        source, target = ((here, args.update_to) if args.update_to
-                          else (args.update_from, here))
-        print("\nORDER TRACKER — update the program files\n")
-        print(f"  from  {source}")
-        print(f"  to    {target}\n")
-        try:
-            done = relocate.update_app(source, target)
-        except relocate.MoveError as exc:
-            print(f"  {exc}\n")
-            return 1
-        for step in done["steps"]:
-            print(f"  [ ok ] {step}")
-        print("\n  Done. Start it with:\n")
-        print(f'      cd /d "{done["destination"]}"')
-        print("      py run.py\n")
-        return 0
 
     # "Everything lives here" — for a folder copied to another drive by
     # hand, which is how it gets there on a machine that will not let

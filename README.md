@@ -501,8 +501,6 @@ python3 run.py --reindex       # re-read the text of every stored document
 python3 run.py --data FOLDER   # keep orders and documents somewhere else
 python3 run.py --where         # print where the data is kept and what is in it
 python3 run.py --here          # keep everything in this folder from now on
-python3 run.py --update-to F   # write this app over the copy in folder F
-python3 run.py --update-from F # refresh this copy from the one in folder F
 ```
 
 ### If the desktop shortcut is missing
@@ -571,20 +569,22 @@ starts it. From then on the database, the documents, the settings file and
 the scratch folder for temporary work all live in that one folder, and
 nothing is written to the system disk at all. Afterwards just `py run.py`.
 
-**To update it later**, pull on the machine that can reach GitHub and push
-the new files across — git cannot be relied on over a share, and the copy
-has no git history of its own anyway:
+**To update it later**, double-click **`update.bat`**. It is in both folders,
+so run it from whichever one you are in:
 
-```
-cd /d C:\Users\<you>\Order-tracker
-git pull
-py run.py --update-to "G:\your folder\Order Tracker"
-```
+1. it fetches the newest version into the downloaded folder (the one with
+   the download history in it), and
+2. copies the program across to the copy you run from.
 
-That replaces the program only. The orders, the documents, the settings and
-the portable marker in the copy are left exactly as they are, so an update
-can never cost you your order book. `py run.py --update-from "C:\..."` does
-the same thing from the other side, if you would rather run it in the copy.
+The first time it asks where the other folder is; paste the path and it
+remembers. Everything after that is one double-click.
+
+It replaces the program only. `data`, `demo-data`, `settings.json` and
+`portable.txt` are excluded on both sides, and nothing is ever deleted —
+files are only added or replaced, so an update cannot cost you your order
+book. It refuses to write into a folder that is not an Order Tracker folder,
+and it copies with Windows' own `robocopy` rather than through Python, so a
+machine that only allows approved programs still lets it through.
 
 If the desktop refuses the shortcut — it will, on a machine like this — a
 launcher called `Order Tracker.bat` is written into the app folder instead.
@@ -753,7 +753,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 275 tests, no dependencies
+python3 -m unittest discover tests     # 276 tests, no dependencies
 ```
 
 The pieces:
@@ -762,6 +762,8 @@ The pieces:
 run.py                      entry point
 setup.py                    first-run wizard: storage folder, shortcut, name
 move_to.py                  copy the app and its data to another drive
+update.bat                  Windows: fetch the newest version and copy it
+                            over the copy you run from
 uninstall.py                find every piece of it and remove them
 doctor.py                   startup check when something will not run
 ordertracker/

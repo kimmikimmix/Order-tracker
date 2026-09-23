@@ -26,11 +26,6 @@ JUNK = ("__pycache__", "*.pyc", "*.pyo", ".DS_Store")
 SKIP = shutil.ignore_patterns(*JUNK, "data", "demo-data")
 SKIP_NO_GIT = shutil.ignore_patterns(*JUNK, "data", "demo-data", ".git")
 SKIP_JUNK_ONLY = shutil.ignore_patterns(*JUNK)
-# An update replaces the program and nothing else: not the orders, not the
-# settings, not the marker that makes a copy portable.
-KEEP_ON_UPDATE = ("data", "demo-data", ".git", "settings.json",
-                  "portable.txt", "*.db", "*.db-wal", "*.db-shm")
-SKIP_ON_UPDATE = shutil.ignore_patterns(*JUNK, *KEEP_ON_UPDATE)
 
 PORTABLE_NOTE = (
     "This file makes Order Tracker portable.\n\n"
@@ -269,71 +264,6 @@ def copy_app(source: Path, destination: Path, keep_git: bool = True) -> None:
         raise MoveError("These files could not be written:\n  "
                         + "\n  ".join(describe_copy_failure(exc))
                         + "\n\n" + WINDOWS_ADVICE) from exc
-
-
-def looks_like_the_app(folder: Path) -> str:
-    """Empty when the folder holds Order Tracker, else what is missing."""
-    for needed in ("run.py", "ordertracker", "web"):
-        if not (Path(folder) / needed).exists():
-            return needed
-    return ""
-
-
-def _files_to_update(source: Path) -> int:
-    """How many program files an update would write."""
-    count = 0
-    for folder, subfolders, names in os.walk(source):
-        here = Path(folder)
-        ignored = SKIP_ON_UPDATE(str(here), [*subfolders, *names])
-        subfolders[:] = [d for d in subfolders if d not in ignored]
-        count += sum(1 for name in names if name not in ignored)
-    return count
-
-
-def update_app(source, destination) -> dict:
-    """Refresh the program files in one folder from another copy of it.
-
-    The copy that actually gets used lives on a personal drive, which git
-    cannot reliably reach — and on a locked-down machine may not be allowed
-    to. So the machine that *can* pull writes the new files across itself.
-
-    Only the program is replaced. Orders, documents, settings and the
-    marker that makes a copy portable are left exactly as they are on both
-    sides, so an update can never cost anybody their order book.
-    """
-    source = settings.expand(source).resolve()
-    destination = settings.expand(destination).resolve()
-
-    missing = looks_like_the_app(source)
-    if missing:
-        raise MoveError(
-            f"{source}\ndoes not look like an Order Tracker folder — "
-            f"{missing} is missing.")
-    if source == destination:
-        raise MoveError("The folder to update from and the folder to update "
-                        "are the same one.")
-    missing = looks_like_the_app(destination)
-    if missing and destination.exists() and any(destination.iterdir()):
-        raise MoveError(
-            f"{destination}\nis not an Order Tracker folder ({missing} is "
-            "missing), and it is not empty.\nRefusing to write into it.")
-
-    expected = _files_to_update(source)
-    try:
-        shutil.copytree(source, destination, ignore=SKIP_ON_UPDATE,
-                        copy_function=force_copy, dirs_exist_ok=True)
-    except (shutil.Error, OSError) as exc:
-        raise MoveError("These files could not be written:\n  "
-                        + "\n  ".join(describe_copy_failure(exc))
-                        + "\n\n" + WINDOWS_ADVICE) from exc
-
-    stored = count_stored(destination / "data" / "orders.db")
-    steps = [f"copied {expected} program file(s) from {source}",
-             "left the orders, the documents and the settings alone"]
-    if stored:
-        steps.append(f"that folder still holds {stored}")
-    return {"ok": True, "source": str(source), "destination": str(destination),
-            "files": expected, "orders": stored, "steps": steps}
 
 
 def copy_data(destination: Path, replace: bool = False) -> dict:
