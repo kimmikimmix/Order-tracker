@@ -15,9 +15,9 @@ import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import (backup, cases, config, db, documents, geo, importer, mail,
-               multipart, orders, pcb, prefs, printsheet, relocate, settings,
-               threads)
+from . import (backup, briefing, cases, config, db, documents, geo,
+               importer, mail, multipart, orders, pcb, prefs, printsheet,
+               relocate, settings, threads)
 
 MAX_BODY_BYTES = config.MAX_UPLOAD_BYTES + (8 * 1024 * 1024)
 
@@ -97,7 +97,14 @@ def _dashboard() -> dict:
     board["mail"] = mail.tray()
     board["cases"] = cases.summary()
     board["folders"] = threads.summary()
+    board["today"] = briefing.today()
     return board
+
+
+@route("GET", r"/api/today")
+def api_today(handler, match):
+    days = int(handler.query.get("days") or briefing.SOON_DAYS)
+    return briefing.today(days)
 
 
 @route("GET", r"/api/dashboard")

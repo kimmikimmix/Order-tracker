@@ -33,6 +33,14 @@ for a turnkey order the SMT, the stencils and the components. Inflation and
 markup are applied on top, and the whole sheet totals as you type. One click
 prints the specification and the costing on white paper.
 
+**Opens on what you have to do today.** The first thing on the first page is
+one list of everything waiting on you, gathered from the four places it
+hides: email the matching was not sure about, follow-up actions logged in
+folders and cases, folders whose come-back date has arrived, orders past
+their promised date, disputes whose answer is due, and paperwork nobody
+filed. Late things are red and first, every line says why it is there, and
+clicking one opens the thing itself. When there is nothing, it says so.
+
 **Tells you what needs chasing.** The dashboard raises flags without being
 asked:
 
@@ -760,7 +768,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 284 tests, no dependencies
+python3 -m unittest discover tests     # 295 tests, no dependencies
 ```
 
 The pieces:
@@ -780,6 +788,7 @@ ordertracker/
   cases.py                  disputes and defects, and the log of each one
   threads.py                a folder per running conversation with a customer
   chase.py                  the dated log both of those keep
+  briefing.py               what needs doing today, from everywhere at once
   settings.py               remembered storage folder and welcome name
   shortcut.py               desktop shortcut for Windows, macOS and Linux
   prefs.py                  the settings page's values, stored with the data

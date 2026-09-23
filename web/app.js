@@ -304,6 +304,8 @@ function renderDash() {
   const maxStatus = Math.max(1, ...d.by_status.map(s => s.count));
 
   el.innerHTML = `
+    ${todayHTML(d.today)}
+
     ${MapView.html()}
 
     <div class="tiles">
@@ -389,6 +391,13 @@ function renderDash() {
   loadMap();
 
   el.onclick = event => {
+    const todayRow = event.target.closest('.today [data-link]');
+    if (todayRow) {
+      const link = todayRow.dataset.link;
+      if (NAV_VIEWS.includes(link)) show(link);
+      else location.hash = '#' + link;
+      return;
+    }
     const pin = event.target.closest('.pin[data-company]');
     if (pin) {
       S.filters = { ...S.filters, company_id: pin.dataset.company,
@@ -427,6 +436,63 @@ function renderDash() {
       }
     }
   };
+}
+
+/* ---- what needs doing today ---- */
+
+/* The first thing on the first page. Everything that wants attention, from
+   wherever it was hiding — the tray, the folders, the case log, the order
+   book — with the reason kept, because the reason is most of what tells you
+   how long it will take. */
+function todayHTML(today) {
+  if (!today) return '';
+  const when = new Date().toLocaleDateString(undefined, {
+    weekday: 'long', day: 'numeric', month: 'long' });
+
+  if (!today.total) {
+    return `
+      <section class="today clear">
+        <div class="todayhead">
+          <b>TODAY</b><span>${esc(when)}</span>
+          <span class="spacer"></span>
+          <span class="allclear">nothing is waiting on you</span>
+        </div>
+        <div class="note">No email to check, no action due, nothing overdue.
+          Whatever you do next is your own choice.</div>
+      </section>`;
+  }
+
+  const line = item => `
+    <div class="todayrow ${item.late ? 'late' : ''}" data-link="${esc(item.link)}">
+      <span class="tw">${esc(item.when || '')}</span>
+      <span class="tt">${esc(item.title)}
+        <span class="subtle">${esc(item.detail || '')}</span></span>
+      ${item.chip ? `<span class="chip">${esc(item.chip)}</span>` : ''}
+    </div>`;
+
+  const SHOWN = 5;
+  return `
+    <section class="today">
+      <div class="todayhead">
+        <b>TODAY</b><span>${esc(when)}</span>
+        <span class="spacer"></span>
+        <span><b>${today.total}</b> thing(s) waiting</span>
+        ${today.late ? `<span class="latecount">${today.late} late</span>` : ''}
+      </div>
+      <div class="todaycols">
+        ${today.groups.map(group => `
+          <div class="todaygroup">
+            <h3>${esc(group.title)}
+              <span class="count">${group.items.length}</span></h3>
+            ${group.items.slice(0, SHOWN).map(line).join('')}
+            ${group.items.length > SHOWN ? `
+              <div class="todayrow more" data-link="${esc(group.view)}">
+                <span class="tw"></span>
+                <span class="tt">+ ${group.items.length - SHOWN} more →</span>
+              </div>` : ''}
+          </div>`).join('')}
+      </div>
+    </section>`;
 }
 
 async function loadMap() {

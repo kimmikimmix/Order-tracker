@@ -772,3 +772,40 @@ a.ordlink:hover { text-decoration: underline; }
 .topicbox .tkv .v { color: var(--dim); }
 .chip.dir-in  { color: var(--blue);  border-color:#1d3a56; background:#0f1a26; }
 .chip.dir-out { color: var(--green); border-color:#1f4e33; background:#0c1d14; }
+
+/* ---------- what needs doing today ---------- */
+
+.today {
+  border: 1px solid var(--line); border-top: 2px solid var(--amber);
+  background: var(--panel); padding: 10px 12px 12px; margin-bottom: 12px;
+}
+.today.clear { border-top-color: var(--green); }
+.todayhead {
+  display: flex; align-items: baseline; gap: 10px; font-size: 11px;
+  color: var(--dim); padding-bottom: 8px; border-bottom: 1px solid var(--line-soft);
+}
+.todayhead b { color: var(--amber); letter-spacing: 2px; font-size: 12px; }
+.todayhead .latecount { color: var(--red); }
+.todayhead .allclear { color: var(--green); }
+
+.todaycols {
+  display: grid; gap: 10px 18px; margin-top: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+}
+.todaygroup h3 {
+  font-size: 10px; letter-spacing: 1px; color: var(--dim); font-weight: 400;
+  margin: 2px 0 4px; display: flex; gap: 6px; align-items: center;
+}
+.todaygroup h3 .count { color: var(--dimmer); }
+.todayrow {
+  display: flex; gap: 8px; align-items: baseline; cursor: pointer;
+  padding: 3px 4px; border-left: 2px solid transparent; font-size: 11.5px;
+}
+.todayrow:hover { background: var(--panel-2); border-left-color: var(--amber); }
+.todayrow.late { border-left-color: var(--red); }
+.todayrow .tw { width: 92px; flex: none; color: var(--dim); font-size: 10.5px; }
+.todayrow.late .tw { color: var(--red); }
+.todayrow .tt { flex: 1; overflow: hidden; text-overflow: ellipsis;
+                white-space: nowrap; }
+.todayrow .tt .subtle { display: block; }
+.todayrow.more .tt { color: var(--blue); }

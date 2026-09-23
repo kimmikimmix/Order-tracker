@@ -26,9 +26,10 @@ config.DOCS_DIR = _TMP / "documents"
 config.DB_PATH = _TMP / "test.db"
 
 import fixtures  # noqa: E402
-from ordertracker import (backup, cases, chase, db, documents,  # noqa: E402
-                          geo, importer, mail, multipart, orders, outlook,
-                          pcb, prefs, printsheet, sampledata, threads)
+from ordertracker import (backup, briefing, cases, chase, db,  # noqa: E402
+                          documents, geo, importer, mail, multipart, orders,
+                          outlook, pcb, prefs, printsheet, sampledata,
+                          threads)
 from ordertracker.extract import extract_text  # noqa: E402
 
 
@@ -3594,3 +3595,116 @@ class TestProductOnAnOrder(unittest.TestCase):
         page = printsheet.render(order_id)
         self.assertIn("PN-4471-B", page)
         self.assertIn("motor controller", page)
+
+
+class TestWhatNeedsDoingToday(unittest.TestCase):
+    """The first thing on the first page: one list, from four places."""
+
+    def setUp(self):
+        fresh_db()
+        self.order = orders.create_order({
+            "company": "Sakura Denshi KK", "order_no": "OT-1",
+            "status": "IN PRODUCTION",
+            "promise_date": (datetime.date.today()
+                             - datetime.timedelta(days=3)).isoformat()})
+
+    def groups(self, day=None):
+        return {group["key"]: group["items"]
+                for group in (day or briefing.today())["groups"]}
+
+    def test_an_empty_order_book_asks_nothing_of_you(self):
+        fresh_db()
+        day = briefing.today()
+        self.assertEqual(day["total"], 0)
+        self.assertEqual(day["late"], 0)
+        self.assertEqual(day["groups"], [])
+
+    def test_an_order_past_its_date_is_listed_as_late(self):
+        found = self.groups()["orders"]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["link"], f"order/{self.order}")
+        self.assertTrue(found[0]["late"])
+        self.assertIn("late", found[0]["when"])
+
+    def test_an_order_that_is_finished_asks_nothing(self):
+        orders.update_order(self.order, {"status": "PAID"})
+        self.assertNotIn("orders", self.groups())
+
+    def test_an_order_promised_next_month_can_wait(self):
+        orders.update_order(self.order, {
+            "promise_date": (datetime.date.today()
+                             + datetime.timedelta(days=30)).isoformat()})
+        self.assertNotIn("orders", self.groups())
+
+    def test_a_late_action_in_a_case_is_listed_against_its_case(self):
+        case_id = cases.open_case({"order_id": self.order,
+                                   "title": "12 boards open"})
+        cases.add_entry(case_id, {
+            "summary": "Chase the cross-section",
+            "follow_up_at": (datetime.date.today()
+                             - datetime.timedelta(days=1)).isoformat()})
+        action = self.groups()["actions"][0]
+        self.assertEqual(action["title"], "Chase the cross-section")
+        self.assertEqual(action["link"], f"case/{case_id}")
+        self.assertTrue(action["late"])
+        self.assertEqual(action["chip"], "CASE")
+
+    def test_a_folder_action_is_listed_against_its_folder(self):
+        folder = threads.open_folder({"company": "Sakura Denshi KK",
+                                      "topic": "RFQ"})
+        threads.add_entry(folder, {
+            "summary": "Send the quote",
+            "follow_up_at": datetime.date.today().isoformat()})
+        action = [a for a in self.groups()["actions"]
+                  if a["title"] == "Send the quote"][0]
+        self.assertEqual(action["link"], f"folder/{folder}")
+        self.assertEqual(action["when"], "today")
+        self.assertFalse(action["late"])
+
+    def test_a_folder_whose_own_date_has_come_is_listed(self):
+        folder = threads.open_folder({
+            "company": "Sakura Denshi KK", "topic": "Sample request",
+            "follow_up_at": datetime.date.today().isoformat()})
+        due = self.groups()["folders"]
+        self.assertEqual(due[0]["link"], f"folder/{folder}")
+
+    def test_email_waiting_to_be_checked_is_listed(self):
+        raw = ("From: nobody@unknown.example\r\nTo: sales@ourpcb.example\r\n"
+               "Subject: Can you make this board?\r\n"
+               "Date: Mon, 21 Sep 2026 09:30:00 +0900\r\n"
+               "Content-Type: text/plain; charset=\"utf-8\"\r\n\r\n"
+               "We are new here.\r\n").encode()
+        item = mail.intake("new.eml", raw)
+        listed = self.groups()["email"]
+        self.assertEqual(listed[0]["link"], f"mail/{item['id']}")
+        self.assertEqual(listed[0]["title"], "Can you make this board?")
+
+    def test_a_saved_email_is_not_also_counted_as_loose_paperwork(self):
+        raw = ("From: nobody@unknown.example\r\nSubject: hello\r\n"
+               "Date: Mon, 21 Sep 2026 09:30:00 +0900\r\n\r\nhi\r\n").encode()
+        mail.intake("new.eml", raw)
+        documents.store("packing list.pdf", b"%PDF-1.4 loose")
+        paperwork = [item["title"] for item in self.groups()["documents"]]
+        self.assertEqual(paperwork, ["packing list.pdf"])
+
+    def test_the_count_adds_up_and_the_late_ones_are_counted(self):
+        day = briefing.today()
+        self.assertEqual(day["total"],
+                         sum(len(g["items"]) for g in day["groups"]))
+        self.assertEqual(day["late"],
+                         sum(1 for g in day["groups"] for i in g["items"]
+                             if i["late"]))
+
+    def test_dates_are_put_in_words(self):
+        today = datetime.date.today()
+        self.assertEqual(briefing._when(today.isoformat()), "today")
+        self.assertEqual(
+            briefing._when((today + datetime.timedelta(days=1)).isoformat()),
+            "tomorrow")
+        self.assertEqual(
+            briefing._when((today - datetime.timedelta(days=1)).isoformat()),
+            "1 day late")
+        self.assertEqual(
+            briefing._when((today - datetime.timedelta(days=4)).isoformat()),
+            "4 days late")
+        self.assertEqual(briefing._when(None), "")
