@@ -8,8 +8,8 @@ from . import config, db, geo, pcb, prefs
 
 ORDER_FIELDS = (
     "order_no", "company_id", "po_number", "product_code", "product_name",
-    "description", "status", "value", "currency", "order_date", "promise_date",
-    "ship_date", "owner", "priority", "notes",
+    "work_order_no", "description", "status", "value", "currency",
+    "order_date", "promise_date", "ship_date", "owner", "priority", "notes",
 )
 
 SORTABLE = {
@@ -25,6 +25,7 @@ SORTABLE = {
     "updated_at": "o.updated_at",
     "priority": "o.priority",
     "product_name": "o.product_name",
+    "work_order_no": "o.work_order_no",
 }
 
 
@@ -309,15 +310,16 @@ def create_order(data: dict, actor: str = "") -> int:
             cur = conn.execute(
                 """INSERT INTO orders
                    (order_no, company_id, po_number, product_code,
-                    product_name, description, status, value,
+                    product_name, work_order_no, description, status, value,
                     currency, order_date, promise_date, ship_date, owner,
                     priority, notes, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     order_no, company_id,
                     (data.get("po_number") or "").strip() or None,
                     (data.get("product_code") or "").strip() or None,
                     (data.get("product_name") or "").strip() or None,
+                    (data.get("work_order_no") or "").strip() or None,
                     data.get("description") or None,
                     status,
                     _as_number(data.get("value")),
@@ -415,6 +417,94 @@ def update_order(order_id: int, data: dict, actor: str = "", note: str = "") -> 
             )
         db.reindex_order(conn, order_id)
         db.touch(conn)
+
+
+# --- the history, and the lines you write into it --------------------------
+#
+# Everything the app does to an order writes itself down: created, and every
+# move from one stage to the next. Those lines are the record of what
+# happened and stay as they are. A line you type yourself — a phone call, a
+# promise made, a reason — is yours, so it can be corrected or removed.
+
+
+def _stamp_for(when) -> str:
+    """A timestamp for something that happened on the day you say it did.
+
+    The date is yours and the clock time is now, so two notes dated the
+    same day still read in the order you wrote them.
+    """
+    date = normalise_date(when)
+    if not date:
+        return db.now()
+    return f"{date} {db.now()[11:]}"
+
+
+def _hand_written(conn, entry_id: int):
+    row = conn.execute("SELECT * FROM status_history WHERE id = ?",
+                       (entry_id,)).fetchone()
+    if row is None:
+        raise OrderError("That line is no longer there.")
+    if not row["by_hand"]:
+        raise OrderError("The app wrote that line when the order moved. "
+                         "It cannot be changed — add a note of your own "
+                         "instead.")
+    return row
+
+
+def add_note(order_id: int, data: dict, actor: str = "") -> int:
+    """Write a line of your own into an order's history."""
+    note = str((data or {}).get("note") or "").strip()
+    if not note:
+        raise OrderError("Type the note first.")
+    conn = db.connect()
+    order = conn.execute("SELECT status FROM orders WHERE id = ?",
+                         (order_id,)).fetchone()
+    if order is None:
+        raise OrderError("That order is no longer there.")
+    who = str((data or {}).get("changed_by") or actor or "").strip() or None
+    with conn:
+        cur = conn.execute(
+            """INSERT INTO status_history(order_id, from_status, to_status,
+                                          note, changed_by, changed_at,
+                                          by_hand)
+               VALUES (?, NULL, ?, ?, ?, ?, 1)""",
+            (order_id, order["status"], note, who,
+             _stamp_for((data or {}).get("changed_at"))),
+        )
+        db.touch(conn)
+    return cur.lastrowid
+
+
+def update_note(entry_id: int, data: dict) -> None:
+    """Correct a line you wrote. The app's own lines are refused."""
+    conn = db.connect()
+    row = _hand_written(conn, entry_id)
+    data = data or {}
+    note = str(data.get("note", row["note"]) or "").strip()
+    if not note:
+        raise OrderError("A note cannot be left empty. Delete it instead.")
+    changed_at = (_stamp_for(data["changed_at"]) if data.get("changed_at")
+                  else row["changed_at"])
+    with conn:
+        conn.execute(
+            """UPDATE status_history
+                  SET note = ?, changed_by = ?, changed_at = ?
+                WHERE id = ?""",
+            (note,
+             str(data.get("changed_by", row["changed_by"]) or "").strip() or None,
+             changed_at, entry_id),
+        )
+        db.touch(conn)
+
+
+def delete_note(entry_id: int) -> int:
+    """Remove a line you wrote. Returns the order it was on."""
+    conn = db.connect()
+    row = _hand_written(conn, entry_id)
+    with conn:
+        conn.execute("DELETE FROM status_history WHERE id = ?", (entry_id,))
+        db.touch(conn)
+    return row["order_id"]
 
 
 def delete_order(order_id: int) -> None:

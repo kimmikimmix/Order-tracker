@@ -243,6 +243,10 @@ def load(seed: int = 7) -> dict:
         order_id = orders.create_order({
             "order_no": order_no,
             "product_code": f"PN-{4000 + index * 7}-{'ABCDEF'[index % 6]}",
+            # 작지번호 — the number the factory floor works to. Quoted
+            # orders have not been given one yet.
+            "work_order_no": ("" if status == "QUOTE"
+                              else f"W{today.year % 100}-{3100 + index * 3}"),
             "product_name": product.split(" - ")[-1] if " - " in product
                             else product,
             "company": company,

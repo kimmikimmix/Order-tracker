@@ -357,7 +357,9 @@ async function openFolder(folderId) {
       </div>
       <div class="filterbar" style="padding:4px 0 12px">
         <button class="btn primary" id="fe-add">ADD TO THE LOG</button>
-        <span class="note">Every entry keeps its date. Nothing is overwritten.</span>
+        <button class="btn hidden" id="fe-cancel">CANCEL</button>
+        <span class="note">Every entry keeps its date.
+          EDIT brings one back up here to correct.</span>
       </div>
 
       <div class="timeline caselog">
@@ -383,6 +385,7 @@ async function openFolder(folderId) {
             </div>
             <div class="when">${esc(entry.happened_at || '')}
               ${entry.who ? ' · ' + esc(entry.who) : ''}
+              <button class="btn" data-edit-entry="${entry.id}">EDIT</button>
               <button class="btn danger" data-del-entry="${entry.id}">DEL</button></div>
           </div>`).join('') || '<div class="note">Nothing logged yet.</div>'}
       </div>
@@ -449,14 +452,31 @@ async function openFolder(folderId) {
     };
   });
 
+  /* EDIT puts an entry back into the box it was typed in; the button
+     then saves the correction instead of adding another line. */
+  let editing = null;
+
+  const stopEditing = () => {
+    editing = null;
+    ['fe-summary', 'fe-who', 'fe-detail', 'fe-follow_up_at']
+      .forEach(id => { $('#' + id).value = ''; });
+    $('#fe-happened_at').value = todayISO();
+    $('#fe-add').textContent = 'ADD TO THE LOG';
+    $('#fe-cancel').classList.add('hidden');
+  };
+
+  $('#fe-cancel').onclick = stopEditing;
+
   $('#fe-add').onclick = async () => {
+    const body = {
+      summary: $('#fe-summary').value, kind: $('#fe-kind').value,
+      happened_at: $('#fe-happened_at').value, who: $('#fe-who').value,
+      detail: $('#fe-detail').value, follow_up_at: $('#fe-follow_up_at').value,
+    };
     try {
-      await postJSON(`/api/threads/${folderId}/entries`, {
-        summary: $('#fe-summary').value, kind: $('#fe-kind').value,
-        happened_at: $('#fe-happened_at').value, who: $('#fe-who').value,
-        detail: $('#fe-detail').value, follow_up_at: $('#fe-follow_up_at').value,
-      });
-      toast('Added to the log', 'ok');
+      if (editing) await postJSON('/api/thread-entries/' + editing, body);
+      else await postJSON(`/api/threads/${folderId}/entries`, body);
+      toast(editing ? 'Corrected' : 'Added to the log', 'ok');
       openFolder(folderId);
       if (S.view === 'folders') loadFolders();
       reloadBoot(); refreshSaved();
@@ -478,6 +498,23 @@ async function openFolder(folderId) {
       const wasDone = toggle.textContent.trim() === 'REOPEN';
       await postJSON('/api/thread-entries/' + toggle.dataset.toggle, { done: !wasDone });
       openFolder(folderId); reloadBoot();
+      return;
+    }
+    const edit = event.target.closest('[data-edit-entry]');
+    if (edit) {
+      const entry = (folder.entries || []).find(
+        e => e.id === Number(edit.dataset.editEntry));
+      if (!entry) return;
+      editing = entry.id;
+      $('#fe-summary').value = entry.summary || '';
+      $('#fe-kind').value = entry.kind || '';
+      $('#fe-happened_at').value = String(entry.happened_at || '').slice(0, 10);
+      $('#fe-who').value = entry.who || '';
+      $('#fe-detail').value = entry.detail || '';
+      $('#fe-follow_up_at').value = entry.follow_up_at || '';
+      $('#fe-add').textContent = 'SAVE THE CHANGE';
+      $('#fe-cancel').classList.remove('hidden');
+      $('#fe-summary').focus();
       return;
     }
     const remove = event.target.closest('[data-del-entry]');

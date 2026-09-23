@@ -190,7 +190,11 @@ def add_entry(case_id: int, data: dict) -> int:
 
 
 def update_entry(entry_id: int, data: dict) -> None:
-    chase.update(LOG, entry_id, data)
+    """Correct an entry somebody logged earlier."""
+    try:
+        chase.update(LOG, entry_id, data)
+    except chase.LogError as exc:
+        raise CaseError(str(exc)) from exc
 
 
 def complete_follow_up(entry_id: int, done: bool = True) -> None:

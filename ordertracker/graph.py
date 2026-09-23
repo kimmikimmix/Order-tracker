@@ -232,9 +232,13 @@ def for_order(order_id: int) -> dict | None:
     spec = order.get("spec") or {}
     cost = (spec.get("cost") or {}).get("total") or {}
     rows = [
-        ("PRODUCT", order.get("product_name") or "—"),
-        ("PRODUCT NO", order.get("product_code") or "—"),
-        ("ORDER NO", order["order_no"]),
+        (list(config.FIELD_LABELS["product_name"]),
+         order.get("product_name") or "—"),
+        (list(config.FIELD_LABELS["product_code"]),
+         order.get("product_code") or "—"),
+        (list(config.FIELD_LABELS["order_no"]), order["order_no"]),
+        (list(config.FIELD_LABELS["work_order_no"]),
+         order.get("work_order_no") or "—"),
         ("CUSTOMER", order.get("company") or "—"),
         ("CUSTOMER PO", order.get("po_number") or "—"),
         ("STATUS", order["status"]),

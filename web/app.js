@@ -37,6 +37,28 @@ const acls = alert => 'a-' + String(alert || '').replace(/[^A-Za-z]/g, '');
    Orders booked before anybody knew what was being made keep the number as
    their name, which is never empty.  Mirrors headline() on the server. */
 
+/* The Korean name leads, the English one sits under it in small type.
+   The words themselves come from config.py, so they are changed in one
+   place; these are only the fallback for a page opened before boot. */
+const FIELD_LABELS = {
+  product_name:  ['모델 이름', 'PRODUCT NAME'],
+  product_code:  ['관리번호', 'CONTROL NO'],
+  order_no:      ['주문번호', 'ORDER NO'],
+  work_order_no: ['작지번호', 'WORK ORDER NO'],
+};
+
+function labelPair(field) {
+  return ((S.boot && S.boot.field_labels) || FIELD_LABELS)[field]
+         || FIELD_LABELS[field] || [field, ''];
+}
+
+/* Both names, stacked, for a table heading or a form label. Anything in
+   `mark` — a required star, say — stays up on the Korean line. */
+function fieldLabel(field, mark = '') {
+  const [ko, en] = labelPair(field);
+  return `${esc(ko)}${mark}${en ? `<span class="lbl-en">${esc(en)}</span>` : ''}`;
+}
+
 function orderName(o) {
   if (!o) return '';
   return (o.product_name || o.product_code || o.order_no || '').toString();
@@ -106,6 +128,7 @@ const S = {
   filters: { status: '', company_id: '', owner: '', alert: '', closed: '1' },
   importFile: null,
   importPreview: null,
+  noteEdit: null,           // the history note being corrected, if any
 };
 
 /* ----------------------------------------------------------------- splash */
@@ -364,7 +387,8 @@ function renderDash() {
     ${d.attention.length ? `
     <table class="grid">
       <thead><tr>
-        <th>PRODUCT</th><th>ORDER</th><th>CUSTOMER</th><th>DESCRIPTION</th><th>STATUS</th>
+        <th>${fieldLabel('product_name')}</th><th>${fieldLabel('order_no')}</th>
+        <th>CUSTOMER</th><th>DESCRIPTION</th><th>STATUS</th>
         <th>PROMISED</th><th class="num">DUE IN</th><th class="num">VALUE</th><th>FLAGS</th>
       </tr></thead>
       <tbody>
@@ -549,8 +573,10 @@ async function refreshSaved() {
 /* ---- the order book ---- */
 
 const COLUMNS = [
-  { key: 'product',      label: 'PRODUCT',  sort: 'product_name' },
-  { key: 'order_no',     label: 'ORDER',    sort: 'order_no' },
+  { key: 'product_name',  field: 'product_name',  sort: 'product_name' },
+  { key: 'product_code',  field: 'product_code',  sort: 'product_code' },
+  { key: 'order_no',      field: 'order_no',      sort: 'order_no' },
+  { key: 'work_order_no', field: 'work_order_no', sort: 'work_order_no' },
   { key: 'company',      label: 'CUSTOMER', sort: 'company' },
   { key: 'po_number',    label: 'CUST PO',  sort: 'po_number' },
   { key: 'description',  label: 'DESCRIPTION' },
@@ -632,7 +658,7 @@ function renderOrders() {
         ${COLUMNS.map(c => `
           <th class="${c.sort ? 'sortable' : ''} ${c.num ? 'num' : ''}"
               ${c.sort ? `data-sort="${c.sort}"` : ''}>
-            ${c.label}${S.sort.key === c.sort ? `<span class="arrow"> ${S.sort.dir === 'asc' ? '▲' : '▼'}</span>` : ''}
+            ${c.field ? fieldLabel(c.field) : c.label}${S.sort.key === c.sort ? `<span class="arrow"> ${S.sort.dir === 'asc' ? '▲' : '▼'}</span>` : ''}
           </th>`).join('')}
       </tr></thead>
       <tbody>
@@ -674,15 +700,14 @@ function renderOrders() {
 function rowHTML(o, index) {
   const closed = o.status === 'PAID' || o.status === 'CANCELLED';
   return `<tr data-id="${o.id}" data-index="${index}" class="${closed ? 'muted' : ''}">
-    <td>${o.product_name || o.product_code
-           ? `<b>${esc(o.product_name || o.product_code)}</b>`
-             + (o.product_name && o.product_code
-                 ? `<div class="subtle">${esc(o.product_code)}</div>` : '')
-           : '<span style="color:var(--dimmer)">—</span>'}</td>
+    <td>${o.product_name ? `<b>${esc(o.product_name)}</b>`
+                         : '<span style="color:var(--dimmer)">—</span>'}</td>
+    <td style="color:var(--dim)">${esc(o.product_code || '—')}</td>
     <td style="color:var(--amber)">${esc(o.order_no)}</td>
+    <td style="color:var(--dim)">${esc(o.work_order_no || '—')}</td>
     <td>${esc(o.company)}</td>
     <td style="color:var(--dim)">${esc(o.po_number || '—')}</td>
-    <td style="color:var(--dim)">${esc(o.description || '')}</td>
+    <td class="desc" style="color:var(--dim)">${esc(o.description || '')}</td>
     <td><span class="chip ${cls(o.status)}">${esc(o.status)}</span></td>
     <td>${esc(o.promise_date || '—')}</td>
     <td class="num">${dayText(closed ? null : o.days_to_promise)}</td>
@@ -691,6 +716,76 @@ function rowHTML(o, index) {
     <td class="num" style="color:${o.doc_count ? 'var(--text)' : 'var(--dimmer)'}">${o.doc_count || '—'}</td>
     <td>${o.alerts.map(f => `<span class="chip ${acls(f)}">${esc(f)}</span>`).join('')}</td>
   </tr>`;
+}
+
+/* ---- the history, and your own notes in it ---- */
+
+function historyRowHTML(h) {
+  if (S.noteEdit === h.id) {
+    return `<div class="ev">
+      <div class="noterow">
+        <input id="he-changed_at" type="date"
+               value="${esc(String(h.changed_at || '').slice(0, 10))}">
+        <input id="he-changed_by" value="${esc(h.changed_by || '')}" placeholder="who">
+        <input id="he-note" class="grow" value="${esc(h.note || '')}">
+        <button class="btn primary" data-note-save="${h.id}">SAVE</button>
+        <button class="btn" data-note-cancel="1">CANCEL</button>
+      </div></div>`;
+  }
+  const head = h.by_hand
+    ? '<span class="chip">NOTE</span>'
+    : (h.from_status && h.from_status !== h.to_status
+        ? `<span class="chip ${cls(h.from_status)}">${esc(h.from_status)}</span> →
+           <span class="chip ${cls(h.to_status)}">${esc(h.to_status)}</span>`
+        : `<span class="chip ${cls(h.to_status)}">${esc(h.to_status)}</span>`);
+  return `<div class="ev">
+      <div>${head}${h.note ? `<span style="color:var(--dim)"> — ${esc(h.note)}</span>` : ''}</div>
+      <div class="when">${esc(h.changed_at)}${h.changed_by ? ' · ' + esc(h.changed_by) : ''}
+        ${h.by_hand ? `<button class="btn tiny" data-note-edit="${h.id}">EDIT</button>
+                       <button class="btn tiny danger" data-note-del="${h.id}">DEL</button>`
+                    : '<span class="locked" title="written by the app when the order moved">·</span>'}
+      </div>
+    </div>`;
+}
+
+async function addOrderNote() {
+  const o = S.openOrder;
+  const note = $('#h-note').value.trim();
+  if (!note) { toast('Type the note first.', 'err'); return; }
+  try {
+    await postJSON(`/api/orders/${o.id}/history`, {
+      note,
+      changed_at: $('#h-changed_at').value,
+      changed_by: $('#h-changed_by').value,
+    });
+  } catch (err) { toast(err.message, 'err'); return; }
+  S.noteEdit = null;
+  toast('Noted', 'ok');
+  await openOrder(o.id, 'history');
+  refreshSaved();
+}
+
+async function saveOrderNote(entryId) {
+  try {
+    await postJSON('/api/history/' + entryId, {
+      note: $('#he-note').value,
+      changed_at: $('#he-changed_at').value,
+      changed_by: $('#he-changed_by').value,
+    });
+  } catch (err) { toast(err.message, 'err'); return; }
+  S.noteEdit = null;
+  await openOrder(S.openOrder.id, 'history');
+  refreshSaved();
+}
+
+async function deleteOrderNote(entryId) {
+  if (!confirm('Remove this note from the history?')) return;
+  try {
+    await api('/api/history/' + entryId, { method: 'DELETE' });
+  } catch (err) { toast(err.message, 'err'); return; }
+  S.noteEdit = null;
+  await openOrder(S.openOrder.id, 'history');
+  refreshSaved();
 }
 
 function markSelection() {
@@ -1023,7 +1118,8 @@ async function runSearch(text) {
     <h2 class="sect">Orders matching "${esc(text)}" — ${data.orders.length}</h2>
     ${data.orders.length ? `
       <table class="grid"><thead><tr>
-        <th>PRODUCT</th><th>ORDER</th><th>CUSTOMER</th><th>CUST PO</th><th>DESCRIPTION</th>
+        <th>${fieldLabel('product_name')}</th><th>${fieldLabel('order_no')}</th>
+        <th>CUSTOMER</th><th>CUST PO</th><th>DESCRIPTION</th>
         <th>STATUS</th><th>PROMISED</th><th class="num">VALUE</th><th>FLAGS</th>
       </tr></thead><tbody>
         ${data.orders.map(o => `
@@ -1154,12 +1250,14 @@ function renderDetail() {
         </div>
 
         <div class="kv">
+          <div class="k">${fieldLabel('product_name')}</div>
+          <div class="v"><input id="e-product_name" value="${esc(o.product_name || '')}"></div>
+          <div class="k">${fieldLabel('product_code')}</div>
+          <div class="v"><input id="e-product_code" value="${esc(o.product_code || '')}"></div>
+          <div class="k">${fieldLabel('work_order_no')}</div>
+          <div class="v"><input id="e-work_order_no" value="${esc(o.work_order_no || '')}"></div>
           <div class="k">CUSTOMER PO</div>
           <div class="v"><input id="e-po_number" value="${esc(o.po_number || '')}"></div>
-          <div class="k">PRODUCT NO</div>
-          <div class="v"><input id="e-product_code" value="${esc(o.product_code || '')}"></div>
-          <div class="k">PRODUCT NAME</div>
-          <div class="v"><input id="e-product_name" value="${esc(o.product_name || '')}"></div>
           <div class="k">DESCRIPTION</div>
           <div class="v"><input id="e-description" value="${esc(o.description || '')}"></div>
           <div class="k">VALUE</div>
@@ -1282,19 +1380,41 @@ function renderDetail() {
       </div>
 
       <div class="dpane ${tab === 'history' ? '' : 'hidden'}" id="pane-history">
-        <div class="timeline">
-          ${o.history.map(h => `
-            <div class="ev">
-              <div>${h.from_status && h.from_status !== h.to_status
-                      ? `<span class="chip ${cls(h.from_status)}">${esc(h.from_status)}</span> →
-                         <span class="chip ${cls(h.to_status)}">${esc(h.to_status)}</span>`
-                      : `<span class="chip ${cls(h.to_status)}">${esc(h.to_status)}</span>`}
-                ${h.note ? `<span style="color:var(--dim)"> — ${esc(h.note)}</span>` : ''}</div>
-              <div class="when">${esc(h.changed_at)}${h.changed_by ? ' · ' + esc(h.changed_by) : ''}</div>
-            </div>`).join('')}
+        <div class="noterow addnote">
+          <input id="h-changed_at" type="date" value="${todayISO()}"
+                 title="the day it happened">
+          <input id="h-changed_by" placeholder="who"
+                 value="${esc(WELCOME.name || '')}">
+          <input id="h-note" class="grow"
+                 placeholder="a call, a promise made, a reason — anything worth remembering">
+          <button class="btn primary" id="h-add">ADD A NOTE</button>
         </div>
+        <div class="timeline">
+          ${o.history.map(h => historyRowHTML(h)).join('')}
+        </div>
+        <div class="note">The lines the app wrote itself — created, and every
+          move from one stage to the next — stay as they are. The notes you
+          type are yours to correct or remove.</div>
       </div>
     </div>`;
+
+  const historyPane = $('#pane-history', panel);
+  if (historyPane) {
+    $('#h-add', historyPane).onclick = addOrderNote;
+    $('#h-note', historyPane).onkeydown = event => {
+      if (event.key === 'Enter') addOrderNote();
+    };
+    historyPane.onclick = event => {
+      const edit = event.target.closest('[data-note-edit]');
+      const save = event.target.closest('[data-note-save]');
+      const del = event.target.closest('[data-note-del]');
+      if (edit) { S.noteEdit = Number(edit.dataset.noteEdit); renderDetail(); }
+      else if (event.target.closest('[data-note-cancel]')) {
+        S.noteEdit = null; renderDetail();
+      } else if (save) saveOrderNote(Number(save.dataset.noteSave));
+      else if (del) deleteOrderNote(Number(del.dataset.noteDel));
+    };
+  }
 
   $('#d-close').onclick = closeDetail;
   $('#d-save').onclick = saveOrderEdits;
@@ -1405,9 +1525,9 @@ async function changeStatus(newStatus) {
 async function saveOrderEdits() {
   const o = S.openOrder;
   const body = {};
-  ['po_number', 'product_code', 'product_name', 'description', 'value',
-   'currency', 'order_date', 'promise_date', 'ship_date', 'owner', 'priority',
-   'notes'].forEach(field => {
+  ['po_number', 'product_code', 'product_name', 'work_order_no',
+   'description', 'value', 'currency', 'order_date', 'promise_date',
+   'ship_date', 'owner', 'priority', 'notes'].forEach(field => {
     const input = $('#e-' + field);
     if (input) body[field] = input.value;
   });
@@ -1519,7 +1639,7 @@ function newOrderModal(openTab) {
 
     <div class="mpane" id="mpane-basics">
       <div class="formgrid">
-        <div class="lbl">ORDER NO *</div>
+        <div class="lbl">${fieldLabel('order_no', ' *')}</div>
         <div><input id="n-order_no" placeholder="SO-1234"></div>
         <div class="lbl">CUSTOMER *</div>
         <div><input id="n-company" list="companylist" placeholder="start typing…">
@@ -1542,12 +1662,14 @@ function newOrderModal(openTab) {
             `<option ${s === S.boot.pipeline[1] ? 'selected' : ''}>${esc(s)}</option>`).join('')}
         </select></div>
 
-        <div class="lbl">PRODUCT NO</div>
-        <div><input id="n-product_code" list="productcodelist"
-          placeholder="part number"></div>
-        <div class="lbl">PRODUCT NAME</div>
+        <div class="lbl">${fieldLabel('product_name')}</div>
         <div><input id="n-product_name" list="productnamelist"
           placeholder="what the board is called"></div>
+        <div class="lbl">${fieldLabel('product_code')}</div>
+        <div><input id="n-product_code" list="productcodelist"
+          placeholder="관리번호"></div>
+        <div class="lbl">${fieldLabel('work_order_no')}</div>
+        <div><input id="n-work_order_no" placeholder="작지번호"></div>
 
         <div class="lbl">DESCRIPTION</div>
         <div class="wide"><input id="n-description" placeholder="what was ordered"></div>
@@ -1632,8 +1754,9 @@ function newOrderModal(openTab) {
 async function createOrder() {
   const body = {};
   ['order_no', 'company', 'po_number', 'product_code', 'product_name',
-   'status', 'description', 'value', 'currency', 'order_date', 'promise_date',
-   'owner', 'priority', 'notes'].forEach(field => {
+   'work_order_no', 'status', 'description', 'value', 'currency',
+   'order_date', 'promise_date', 'owner', 'priority', 'notes']
+    .forEach(field => {
     const input = $('#n-' + field);
     if (input) body[field] = input.value;
   });

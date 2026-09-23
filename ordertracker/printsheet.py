@@ -9,7 +9,7 @@ screen shows because both come from pcb.cost_sheet.
 import html
 from datetime import datetime
 
-from . import geo, orders, pcb, prefs
+from . import config, geo, orders, pcb, prefs
 
 
 def _text(value) -> str:
@@ -47,9 +47,21 @@ def _yn(value):
 
 
 def _rows(pairs) -> str:
-    """A two-column block of label/value rows, skipping the empty ones."""
-    cells = [f"<tr><th>{html.escape(label)}</th><td>{value}</td></tr>"
-             for label, value in pairs if value not in (None, "", "—")]
+    """A two-column block of label/value rows, skipping the empty ones.
+
+    A label given as a field name out of config.FIELD_LABELS is printed
+    bilingually — the Korean name, the English one small underneath —
+    the way the screens show it.
+    """
+    cells = []
+    for label, value in pairs:
+        if value in (None, "", "—"):
+            continue
+        pair = config.FIELD_LABELS.get(label)
+        head = (f"{html.escape(pair[0])}"
+                f'<span class="en">{html.escape(pair[1])}</span>'
+                if pair else html.escape(label))
+        cells.append(f"<tr><th>{head}</th><td>{value}</td></tr>")
     return "".join(cells) or '<tr><td colspan="2" class="none">not specified</td></tr>'
 
 
@@ -123,8 +135,10 @@ def _spec_blocks(order, spec) -> str:
     <table class="kv">{_rows([
         ("QUOTE DATE", _text(values.get("quote_date"))),
         ("QUOTE REF", _text(values.get("quote_ref"))),
-        ("PRODUCT NO", _text(order.get("product_code"))),
-        ("PRODUCT NAME", _text(order.get("product_name"))),
+        ("product_name", _text(order.get("product_name"))),
+        ("product_code", _text(order.get("product_code"))),
+        ("order_no", _text(order.get("order_no"))),
+        ("work_order_no", _text(order.get("work_order_no"))),
         ("CUSTOMER", _text(order.get("company"))),
         ("CONTACT", _text(values.get("contact_person") or order.get("contact_name"))),
         ("CUSTOMER PO", _text(order.get("po_number"))),
@@ -225,6 +239,8 @@ table.kv th { text-align: left; width: 33%; font-weight: 600; font-size: 9pt;
               vertical-align: top; border-bottom: 1px solid #e3e3e3; }
 table.kv td { padding: 5px 0; border-bottom: 1px solid #e3e3e3;
               vertical-align: top; }
+table.kv th .en { display: block; font-size: 7pt; font-weight: 600;
+                  letter-spacing: .6px; color: #999; }
 table.cost th { font-size: 9pt; letter-spacing: .6px; color: #444;
                 text-align: left; border-bottom: 1.5px solid #111; padding: 6px 4px; }
 table.cost td { padding: 7px 4px; border-bottom: 1px solid #e3e3e3; }

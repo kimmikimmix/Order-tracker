@@ -53,6 +53,8 @@ def api_bootstrap(handler, match):
         "terminal_statuses": sorted(config.TERMINAL_STATUSES),
         "doc_kinds": sorted(config.DOC_KINDS) + ["OTHER"],
         "import_fields": list(importer.FIELDS),
+        "field_labels": {name: list(pair)
+                         for name, pair in config.FIELD_LABELS.items()},
         "companies": _companies(),
         "products": orders.product_list(),
         "dashboard": _dashboard(),
@@ -166,6 +168,35 @@ def api_order_update(handler, match):
     try:
         orders.update_order(order_id, data, actor=data.get("actor", ""),
                             note=data.get("note", ""))
+    except orders.OrderError as exc:
+        raise ApiError(str(exc)) from exc
+    return {"ok": True, "order": orders.get_order(order_id)}
+
+
+@route("POST", r"/api/orders/(\d+)/history")
+def api_order_note_add(handler, match):
+    """A line of your own in an order's history."""
+    order_id = int(match.group(1))
+    try:
+        entry_id = orders.add_note(order_id, handler.json_body())
+    except orders.OrderError as exc:
+        raise ApiError(str(exc)) from exc
+    return {"ok": True, "id": entry_id, "order": orders.get_order(order_id)}
+
+
+@route("POST", r"/api/history/(\d+)")
+def api_order_note_update(handler, match):
+    try:
+        orders.update_note(int(match.group(1)), handler.json_body())
+    except orders.OrderError as exc:
+        raise ApiError(str(exc)) from exc
+    return {"ok": True}
+
+
+@route("DELETE", r"/api/history/(\d+)")
+def api_order_note_delete(handler, match):
+    try:
+        order_id = orders.delete_note(int(match.group(1)))
     except orders.OrderError as exc:
         raise ApiError(str(exc)) from exc
     return {"ok": True, "order": orders.get_order(order_id)}
@@ -475,10 +506,13 @@ def api_thread_entry_add(handler, match):
 def api_thread_entry_update(handler, match):
     data = handler.json_body()
     entry_id = int(match.group(1))
-    if "done" in data:
-        threads.complete_follow_up(entry_id, bool(data["done"]))
-    else:
-        threads.update_entry(entry_id, data)
+    try:
+        if "done" in data:
+            threads.complete_follow_up(entry_id, bool(data["done"]))
+        else:
+            threads.update_entry(entry_id, data)
+    except threads.ThreadError as exc:
+        raise ApiError(str(exc)) from exc
     return {"ok": True}
 
 
@@ -573,10 +607,13 @@ def api_case_entry_add(handler, match):
 def api_case_entry_update(handler, match):
     data = handler.json_body()
     entry_id = int(match.group(1))
-    if "done" in data:
-        cases.complete_follow_up(entry_id, bool(data["done"]))
-    else:
-        cases.update_entry(entry_id, data)
+    try:
+        if "done" in data:
+            cases.complete_follow_up(entry_id, bool(data["done"]))
+        else:
+            cases.update_entry(entry_id, data)
+    except cases.CaseError as exc:
+        raise ApiError(str(exc)) from exc
     return {"ok": True}
 
 
@@ -632,11 +669,16 @@ def api_export(handler, match):
     rows = orders.list_orders(limit=100000)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    columns = ["product_name", "product_code", "order_no", "company",
-               "po_number", "description", "status",
+    columns = ["product_name", "product_code", "order_no", "work_order_no",
+               "company", "po_number", "description", "status",
                "value", "currency", "order_date", "promise_date", "ship_date",
                "owner", "priority", "doc_count", "notes"]
-    writer.writerow(columns + ["alerts"])
+    # Korean first in the header row, so the file opens in Excel reading
+    # the way the screens do; the English name follows in brackets.
+    writer.writerow([
+        f"{config.FIELD_LABELS[c][0]} ({config.FIELD_LABELS[c][1]})"
+        if c in config.FIELD_LABELS else c
+        for c in columns] + ["alerts"])
     for row in rows:
         writer.writerow([row.get(c, "") for c in columns] + ["; ".join(row["alerts"])])
 

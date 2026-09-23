@@ -14,7 +14,7 @@ from . import config, drives
 
 _local = threading.local()
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def now() -> str:
@@ -223,6 +223,11 @@ CREATE INDEX IF NOT EXISTS idx_orders_company ON orders(company_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status  ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_promise ON orders(promise_date);
 
+-- An order's own record. by_hand is 1 for a line somebody typed and 0 for
+-- one the app wrote itself; only your own lines can be changed or removed
+-- afterwards, because what happened to the order has to stay as it
+-- happened. Comments stay out of the column list: SQLite rewrites this
+-- text when a column is dropped and a stray one breaks the statement.
 CREATE TABLE IF NOT EXISTS status_history (
     id          INTEGER PRIMARY KEY,
     order_id    INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
@@ -230,7 +235,8 @@ CREATE TABLE IF NOT EXISTS status_history (
     to_status   TEXT NOT NULL,
     note        TEXT,
     changed_by  TEXT,
-    changed_at  TEXT NOT NULL
+    changed_at  TEXT NOT NULL,
+    by_hand     INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_history_order ON status_history(order_id, changed_at);
@@ -481,8 +487,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
 # EXISTS", so each is applied only when the table is missing it.
 LATER_COLUMNS = {
     "orders": [
-        ("product_code", "TEXT"),   # the part number the board is known by
-        ("product_name", "TEXT"),   # or the name, when there is no number
+        ("product_code", "TEXT"),    # 관리번호, the number the board is known by
+        ("product_name", "TEXT"),    # 모델 이름
+        ("work_order_no", "TEXT"),   # 작지번호, the number the floor works to
+    ],
+    "status_history": [
+        ("by_hand", "INTEGER NOT NULL DEFAULT 0"),  # a note you typed
     ],
     "emails": [
         ("thread_id", "INTEGER"),   # the folder it was filed into, if any
@@ -599,7 +609,8 @@ def reindex_order(conn: sqlite3.Connection, order_id: int) -> None:
     """Rewrite the search row for one order."""
     conn.execute("DELETE FROM orders_fts WHERE order_id = ?", (order_id,))
     row = conn.execute(
-        """SELECT o.id, o.order_no, o.po_number, o.product_code, o.product_name,
+        """SELECT o.id, o.order_no, o.work_order_no, o.po_number,
+                  o.product_code, o.product_name,
                   o.description, o.notes, o.owner, c.name AS company
            FROM orders o JOIN companies c ON c.id = o.company_id
            WHERE o.id = ?""",
@@ -612,7 +623,10 @@ def reindex_order(conn: sqlite3.Connection, order_id: int) -> None:
                                   description, notes, owner, order_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            row["order_no"] or "",
+            # The work order number rides in the same column as the order
+            # number: both are "the number this job is called", and folding
+            # them together means an older index needs no rebuilding.
+            " ".join(filter(None, (row["order_no"], row["work_order_no"]))),
             row["po_number"] or "",
             row["company"] or "",
             " ".join(filter(None, (row["product_code"], row["product_name"]))),

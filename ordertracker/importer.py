@@ -13,43 +13,58 @@ from . import db, orders
 from .xlsx import Workbook
 
 # Header names seen in the wild, per target field. Matching is loose: case,
-# spaces and punctuation are ignored.
+# spaces and punctuation are ignored. Korean headers are listed beside the
+# English ones, because the spreadsheets that come out of the factory are
+# written in Korean and should not have to be retyped.
 ALIASES = {
     "order_no": ("orderno", "ordernumber", "order", "salesorder", "sonumber",
-                 "so", "sono", "orderid", "reference", "ourref", "jobno"),
+                 "so", "sono", "orderid", "reference", "ourref", "jobno",
+                 "주문번호", "수주번호", "오더번호"),
     "po_number": ("po", "pono", "ponumber", "purchaseorder", "customerpo",
-                  "custpo", "yourref", "buyerref"),
+                  "custpo", "yourref", "buyerref", "발주번호", "고객발주번호"),
     "company": ("company", "customer", "customername", "client", "account",
-                "accountname", "buyer", "soldto", "companyname"),
+                "accountname", "buyer", "soldto", "companyname",
+                "거래처", "고객사", "업체", "업체명", "거래처명"),
     "product_code": ("productcode", "productno", "productnumber", "partno",
                      "partnumber", "pn", "pncode", "itemcode", "itemno",
-                     "sku", "modelno", "articleno", "drawingno"),
+                     "sku", "modelno", "articleno", "drawingno",
+                     "관리번호", "품번", "모델번호"),
     "product_name": ("productname", "product", "model", "modelname",
-                     "itemname", "boardname", "partname"),
+                     "itemname", "boardname", "partname",
+                     "모델이름", "모델명", "품명", "제품명"),
+    "work_order_no": ("workorderno", "workorder", "worksheetno", "joborderno",
+                      "jobnumber", "worksorderno", "wono",
+                      "작지번호", "작지", "작업지시번호", "작업번호"),
     "description": ("description", "details", "summary",
                     "lineitem", "goods", "partdescription"),
-    "status": ("status", "orderstatus", "stage", "state", "progress"),
+    "status": ("status", "orderstatus", "stage", "state", "progress",
+               "상태", "진행상태", "진행"),
     "value": ("value", "amount", "total", "nettotal", "ordervalue", "price",
-              "totalvalue", "netamount", "revenue"),
+              "totalvalue", "netamount", "revenue", "금액", "수주금액", "단가"),
     "currency": ("currency", "curr", "ccy"),
     "order_date": ("orderdate", "date", "dateordered", "created", "placed",
-                   "orderreceived"),
+                   "orderreceived", "수주일", "주문일", "수주일자"),
     "promise_date": ("promisedate", "duedate", "delivery", "deliverydate",
                      "requireddate", "eta", "promised", "targetdate",
-                     "requesteddelivery", "shipby"),
+                     "requesteddelivery", "shipby", "납기", "납기일",
+                     "납기일자", "납품일"),
     "ship_date": ("shipdate", "shipped", "dispatchdate", "despatched",
-                  "actualship"),
+                  "actualship", "출하일", "출고일", "선적일"),
     "owner": ("owner", "salesrep", "rep", "accountmanager", "salesperson",
-              "assignedto", "responsible"),
+              "assignedto", "responsible", "담당자", "영업담당"),
     "priority": ("priority", "urgency"),
-    "notes": ("notes", "comment", "comments", "remarks", "memo"),
+    "notes": ("notes", "comment", "comments", "remarks", "memo", "비고", "메모"),
 }
 
 FIELDS = tuple(ALIASES.keys())
 
 
 def _norm(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
+    """A header reduced to what matters: case, spaces and punctuation go.
+
+    Hangul is kept, so a column headed "작 지 번 호" still matches.
+    """
+    return re.sub(r"[^a-z0-9\uac00-\ud7a3]+", "", (text or "").lower())
 
 
 def suggest_mapping(headers) -> dict:

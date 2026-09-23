@@ -38,6 +38,24 @@ PORT = int(os.environ.get("ORDER_TRACKER_PORT", "8787"))
 # Largest single upload accepted, in bytes.
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 
+# --- What the numbers on an order are called -------------------------------
+# The office works in Korean, so the Korean name leads and the English one
+# sits under it in small type. Change either word here and every screen,
+# the printed sheet and the spreadsheet import all follow.
+
+FIELD_LABELS = {
+    "product_name":  ("모델 이름", "PRODUCT NAME"),
+    "product_code":  ("관리번호", "CONTROL NO"),
+    "order_no":      ("주문번호", "ORDER NO"),
+    "work_order_no": ("작지번호", "WORK ORDER NO"),
+}
+
+
+def label(field: str, joiner: str = " ") -> str:
+    """Both names of a field as one piece of plain text."""
+    return joiner.join(FIELD_LABELS.get(field, (field,)))
+
+
 # --- Pipeline --------------------------------------------------------------
 # Ordered list of the stages an order moves through. Rename freely; the UI,
 # the board view and the "stalled" logic all read from this list.

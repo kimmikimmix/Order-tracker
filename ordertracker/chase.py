@@ -81,8 +81,12 @@ def add(table: str, parent_id: int, data: dict) -> int:
 
 
 def update(table: str, entry_id: int, data: dict) -> None:
+    """Correct an entry, keeping everything it is not asked to change."""
     _log(table)
     data = dict(data or {})
+    if "summary" in data and not str(data["summary"] or "").strip():
+        raise LogError("An entry needs a line saying what happened. "
+                       "Delete it instead of emptying it.")
     changes = {}
     for key in FIELDS:
         if key not in data:

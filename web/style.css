@@ -168,6 +168,10 @@ table.grid td {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   max-width: 340px; height: var(--row-h);
 }
+/* Four numbered columns lead the order list, so what was ordered gives up
+   some of its width to keep the flags on screen. */
+#ordertable td.desc { max-width: 210px; }
+
 table.grid tbody tr { cursor: pointer; }
 table.grid tbody tr:hover { background: #17191e; }
 table.grid tbody tr.sel { background: #1e2129; box-shadow: inset 2px 0 0 var(--amber); }
@@ -234,6 +238,7 @@ button.btn.primary:hover { background: #241a08; }
 button.btn.danger { color: var(--red); border-color: #4a1f1f; }
 button.btn.danger:hover { background: #200c0c; }
 button.btn:disabled { opacity: .4; cursor: not-allowed; }
+button.btn.tiny { font-size: 9px; padding: 0 4px; }
 a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 
 .toggle { display: flex; align-items: center; gap: 4px; font-size: 10px;
@@ -257,6 +262,10 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 }
 .dhead .ono { font-size: 15px; font-weight: 700; color: var(--amber); }
 .dhead .ono-no { color: var(--dim); letter-spacing: .04em; }
+
+/* A field's English name, under its Korean one. */
+.lbl-en { display: block; font-size: 9px; font-weight: 600;
+          letter-spacing: .08em; color: var(--dimmer); margin-top: 1px; }
 .dhead .co  { color: var(--text); }
 .dbody { flex: 1; overflow: auto; padding: 12px; }
 .dclose { margin-left: auto; }
@@ -286,6 +295,18 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
   width: 6px; height: 6px; border-radius: 50%; background: var(--amber-dim);
 }
 .timeline .when { color: var(--dimmer); font-size: 10px; }
+.timeline .when .btn { font-size: 9px; padding: 0 4px; margin-left: 6px;
+                       vertical-align: baseline; }
+.timeline .locked { color: var(--line); margin-left: 6px; }
+
+/* One line of boxes: a date, a name, the note itself, and the button. */
+.noterow { display: flex; gap: 6px; align-items: center; margin: 2px 0; }
+.noterow input { min-width: 0; }
+.noterow input.grow { flex: 1 1 auto; }
+.noterow.addnote { padding: 8px 0 12px; border-bottom: 1px solid var(--line);
+                   margin-bottom: 10px; }
+.noterow input[type="date"] { width: 130px; flex: 0 0 auto; }
+.noterow input:not(.grow):not([type="date"]) { width: 110px; flex: 0 0 auto; }
 
 .doclist { display: flex; flex-direction: column; gap: 3px; }
 .docrow {

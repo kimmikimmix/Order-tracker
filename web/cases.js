@@ -84,7 +84,8 @@ function paintCases() {
     <table class="grid">
       <thead><tr>
         <th style="width:110px">DUE</th><th style="width:110px">CASE</th>
-        <th style="width:140px">PRODUCT</th><th style="width:180px">CUSTOMER</th>
+        <th style="width:140px">${fieldLabel('product_name')}</th>
+        <th style="width:180px">CUSTOMER</th>
         <th>WHAT NEEDS DOING</th><th style="width:90px"></th>
       </tr></thead>
       <tbody>
@@ -122,7 +123,8 @@ function paintCases() {
       <thead><tr>
         <th style="width:100px">CASE</th><th style="width:100px">OPENED</th>
         <th>TITLE</th><th style="width:170px">CUSTOMER</th>
-        <th style="width:120px">PRODUCT</th><th style="width:110px">KIND</th>
+        <th style="width:120px">${fieldLabel('product_name')}</th>
+        <th style="width:110px">KIND</th>
         <th style="width:90px">SEVERITY</th><th style="width:150px">STATUS</th>
         <th class="num" style="width:70px">QTY</th>
         <th class="num" style="width:120px">CLAIM</th>
@@ -330,7 +332,9 @@ async function openCase(caseId) {
       </div>
       <div class="filterbar" style="padding:4px 0 12px">
         <button class="btn primary" id="ce-add">ADD TO THE LOG</button>
-        <span class="note">Every entry keeps its date. Nothing is overwritten.</span>
+        <button class="btn hidden" id="ce-cancel">CANCEL</button>
+        <span class="note" id="ce-hint">Every entry keeps its date.
+          EDIT brings one back up here to correct.</span>
       </div>
 
       <div class="timeline caselog">
@@ -356,6 +360,7 @@ async function openCase(caseId) {
             </div>
             <div class="when">${esc(entry.happened_at || '')}
               ${entry.who ? ' · ' + esc(entry.who) : ''}
+              <button class="btn" data-edit-entry="${entry.id}">EDIT</button>
               <button class="btn danger" data-del-entry="${entry.id}">DEL</button></div>
           </div>`).join('') || '<div class="note">Nothing logged yet.</div>'}
       </div>
@@ -393,6 +398,21 @@ async function openCase(caseId) {
     };
   });
 
+  /* EDIT puts an entry back into the box it was typed in; the button
+     then saves the correction instead of adding another line. */
+  let editing = null;
+
+  const stopEditing = () => {
+    editing = null;
+    ['ce-summary', 'ce-who', 'ce-detail', 'ce-follow_up_at']
+      .forEach(id => { $('#' + id).value = ''; });
+    $('#ce-happened_at').value = today();
+    $('#ce-add').textContent = 'ADD TO THE LOG';
+    $('#ce-cancel').classList.add('hidden');
+  };
+
+  $('#ce-cancel').onclick = stopEditing;
+
   $('#ce-add').onclick = async () => {
     const body = {
       summary: $('#ce-summary').value, kind: $('#ce-kind').value,
@@ -400,8 +420,9 @@ async function openCase(caseId) {
       detail: $('#ce-detail').value, follow_up_at: $('#ce-follow_up_at').value,
     };
     try {
-      await postJSON(`/api/cases/${caseId}/entries`, body);
-      toast('Added to the log', 'ok');
+      if (editing) await postJSON('/api/case-entries/' + editing, body);
+      else await postJSON(`/api/cases/${caseId}/entries`, body);
+      toast(editing ? 'Corrected' : 'Added to the log', 'ok');
       openCase(caseId);
       if (S.view === 'cases') loadCases();
       reloadBoot(); refreshSaved();
@@ -424,6 +445,23 @@ async function openCase(caseId) {
       const wasDone = toggle.textContent.trim() === 'REOPEN';
       await postJSON('/api/case-entries/' + toggle.dataset.toggle, { done: !wasDone });
       openCase(caseId); reloadBoot();
+      return;
+    }
+    const edit = event.target.closest('[data-edit-entry]');
+    if (edit) {
+      const entry = item.entries.find(
+        e => e.id === Number(edit.dataset.editEntry));
+      if (!entry) return;
+      editing = entry.id;
+      $('#ce-summary').value = entry.summary || '';
+      $('#ce-kind').value = entry.kind || '';
+      $('#ce-happened_at').value = String(entry.happened_at || '').slice(0, 10);
+      $('#ce-who').value = entry.who || '';
+      $('#ce-detail').value = entry.detail || '';
+      $('#ce-follow_up_at').value = entry.follow_up_at || '';
+      $('#ce-add').textContent = 'SAVE THE CHANGE';
+      $('#ce-cancel').classList.remove('hidden');
+      $('#ce-summary').focus();
       return;
     }
     const remove = event.target.closest('[data-del-entry]');

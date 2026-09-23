@@ -691,7 +691,21 @@ class TestHttpApi(unittest.TestCase):
     def test_csv_export(self):
         code, body = self.get("/api/export/orders.csv")
         self.assertEqual(code, 200)
-        self.assertIn(b"order_no", body)
+        header = body.decode("utf-8-sig").splitlines()[0]
+        self.assertIn("주문번호 (ORDER NO)", header)
+        self.assertIn("작지번호 (WORK ORDER NO)", header)
+        self.assertIn("company", header)
+
+    def test_the_export_reads_back_in(self):
+        """A file this app wrote must import again without hand-mapping."""
+        from ordertracker import importer
+        code, body = self.get("/api/export/orders.csv")
+        self.assertEqual(code, 200)
+        rows = importer.read_table(body, "orders.csv")
+        mapping = importer.suggest_mapping(rows[0])
+        for field in ("order_no", "company", "product_name", "product_code",
+                      "work_order_no", "promise_date", "value"):
+            self.assertIn(field, mapping, f"{field} lost its column")
 
 
 class TestStorageFailures(unittest.TestCase):
@@ -2812,10 +2826,44 @@ class TestFrontEndScripts(unittest.TestCase):
                              r"([A-Za-z_$][\w$]*)", re.M)
         for script in self.scripts():
             for name in pattern.findall(script.read_text(encoding="utf-8")):
-                if name in declared and declared[name] != script.name:
+                if name in declared:
                     clashes.append(f"{name}: {declared[name]} and {script.name}")
                 declared[name] = script.name
-        self.assertEqual(clashes, [], "two scripts declare the same name")
+        self.assertEqual(clashes, [], "a name is declared twice")
+
+    def test_no_line_starts_two_declarations(self):
+        """A patch that lands on top of its own anchor leaves this behind.
+
+        "function a() {function a() {" parses as far as the end of the
+        file and then fails, which takes the whole script with it — and
+        nothing else in here would notice.
+        """
+        import re
+        pattern = re.compile(r"(?:function|class)\s+[A-Za-z_$][\w$]*\s*\("
+                             r"[^)]*\)\s*\{\s*"
+                             r"(?:function|class)\s+[A-Za-z_$][\w$]*\s*\(")
+        for script in self.scripts():
+            body = script.read_text(encoding="utf-8")
+            self.assertIsNone(pattern.search(body),
+                              f"{script.name} declares twice on one line")
+
+    def test_every_script_parses(self):
+        """Ask a JavaScript engine, when the machine has one.
+
+        The app needs nothing installed to run, so this skips where
+        nothing is installed — but on a machine that has node, a script
+        that would not parse is caught before it is pushed.
+        """
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no javascript engine on this machine")
+        for script in self.scripts():
+            done = subprocess.run([node, "--check", str(script)],
+                                  capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0,
+                             f"{script.name}\n{done.stderr}")
 
     def test_every_script_the_page_asks_for_exists(self):
         import re
@@ -3711,7 +3759,8 @@ class TestTheProductLeads(unittest.TestCase):
         app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
         columns = re.search(r"const COLUMNS = \[(.*?)\n\];", app, re.S).group(1)
         keys = re.findall(r"key: '(\w+)'", columns)
-        self.assertEqual(keys[:2], ["product", "order_no"])
+        self.assertEqual(keys[:4], ["product_name", "product_code",
+                                    "order_no", "work_order_no"])
 
     def test_the_view_is_called_orders_and_the_blotter_is_gone(self):
         page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
@@ -3723,6 +3772,247 @@ class TestTheProductLeads(unittest.TestCase):
         app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
         self.assertIn("=== 'blotter' ? 'orders'", app,
                       "an old #blotter bookmark should still open the orders")
+
+
+class TestTheNumbersAnOrderIsKnownBy(unittest.TestCase):
+    """모델 이름, 관리번호, 주문번호, 작지번호 — in both languages."""
+
+    def setUp(self):
+        fresh_db()
+        self.order = orders.create_order({
+            "company": "Sakura Denshi KK", "order_no": "OT-1",
+            "product_name": "모터 컨트롤러", "product_code": "PN-4471-B",
+            "work_order_no": "W26-3110", "status": "IN PRODUCTION"})
+
+    def test_the_work_order_number_is_kept_and_given_back(self):
+        self.assertEqual(orders.get_order(self.order)["work_order_no"],
+                         "W26-3110")
+
+    def test_it_can_be_changed_and_emptied_afterwards(self):
+        orders.update_order(self.order, {"work_order_no": "W26-9999"})
+        self.assertEqual(orders.get_order(self.order)["work_order_no"],
+                         "W26-9999")
+        orders.update_order(self.order, {"work_order_no": "  "})
+        self.assertIsNone(orders.get_order(self.order)["work_order_no"])
+
+    def test_an_order_book_written_before_the_column_existed_gains_it(self):
+        conn = db.connect()
+        with conn:
+            conn.execute("ALTER TABLE orders DROP COLUMN work_order_no")
+        self.assertNotIn("work_order_no",
+                         {r["name"] for r in conn.execute(
+                             "PRAGMA table_info(orders)")})
+        db.init_db()
+        self.assertIn("work_order_no",
+                      {r["name"] for r in db.connect().execute(
+                          "PRAGMA table_info(orders)")})
+
+    def test_the_work_order_number_is_searchable(self):
+        self.assertEqual(
+            [o["order_no"] for o in orders.search("W26-3110")["orders"]],
+            ["OT-1"])
+
+    def test_every_field_has_both_names(self):
+        for field in ("product_name", "product_code", "order_no",
+                      "work_order_no"):
+            korean, english = config.FIELD_LABELS[field]
+            self.assertTrue(korean.strip() and english.strip(), field)
+        self.assertEqual(config.FIELD_LABELS["work_order_no"][0], "작지번호")
+        self.assertEqual(config.label("관리번호" and "product_code"),
+                         "관리번호 CONTROL NO")
+
+    def test_the_page_is_told_the_words_rather_than_hard_coding_them(self):
+        """Renaming a field in config.py must be enough."""
+        from ordertracker import server
+        boot = json.loads(json.dumps(server.api_bootstrap(None, None)))
+        self.assertEqual(boot["field_labels"]["work_order_no"],
+                         ["작지번호", "WORK ORDER NO"])
+
+    def test_the_network_panel_names_the_fields_in_both(self):
+        from ordertracker import graph
+        rows = {tuple(k) if isinstance(k, list) else k: v
+                for k, v in graph.view(f"order/{self.order}")["detail"]["rows"]}
+        self.assertEqual(rows[("작지번호", "WORK ORDER NO")], "W26-3110")
+
+    def test_the_printed_sheet_names_them_in_both(self):
+        page = printsheet.render(self.order)
+        self.assertIn("작지번호", page)
+        self.assertIn("W26-3110", page)
+        self.assertIn(">WORK ORDER NO<", page)
+
+    def test_a_korean_spreadsheet_maps_itself(self):
+        from ordertracker import importer
+        mapping = importer.suggest_mapping(
+            ["주문번호", "거래처", "모델 이름", "관리번호", "작 지 번 호",
+             "납기일", "담당자"])
+        self.assertEqual(mapping["order_no"], 0)
+        self.assertEqual(mapping["company"], 1)
+        self.assertEqual(mapping["product_name"], 2)
+        self.assertEqual(mapping["product_code"], 3)
+        self.assertEqual(mapping["work_order_no"], 4)
+        self.assertEqual(mapping["promise_date"], 5)
+        self.assertEqual(mapping["owner"], 6)
+
+
+class TestNotesInTheHistory(unittest.TestCase):
+    """What the app wrote stays; what you wrote is yours to correct."""
+
+    def setUp(self):
+        fresh_db()
+        self.order = orders.create_order({
+            "company": "Sakura Denshi KK", "order_no": "OT-1",
+            "status": "IN PRODUCTION"})
+
+    def history(self):
+        return orders.get_order(self.order)["history"]
+
+    def mine(self):
+        """The lines written by hand, newest first.
+
+        A backdated note sits where its date puts it, so a note is looked
+        up by whose it is rather than by where it landed.
+        """
+        return [line for line in self.history() if line["by_hand"]]
+
+    def test_a_note_lands_in_the_history_marked_as_yours(self):
+        orders.add_note(self.order, {"note": "rang Mr Sato, will slip a week",
+                                     "changed_by": "YJ"})
+        line = self.mine()[0]
+        self.assertEqual(line["note"], "rang Mr Sato, will slip a week")
+        self.assertEqual(line["changed_by"], "YJ")
+        self.assertEqual(line["by_hand"], 1)
+        self.assertEqual(line["to_status"], "IN PRODUCTION",
+                         "a note does not move the order")
+        self.assertIsNone(line["from_status"])
+
+    def test_it_keeps_the_day_you_say_it_happened(self):
+        orders.add_note(self.order, {"note": "called", "changed_at": "2026-09-01"})
+        self.assertTrue(self.mine()[0]["changed_at"].startswith("2026-09-01"))
+        self.assertGreater(len(self.mine()[0]["changed_at"]), 10,
+                           "the clock time keeps two notes in order")
+
+    def test_a_backdated_note_sits_where_its_date_puts_it(self):
+        orders.add_note(self.order, {"note": "rang first",
+                                     "changed_at": "2026-01-05"})
+        orders.add_note(self.order, {"note": "rang again"})
+        self.assertEqual([line["note"] for line in self.history()][-1],
+                         "rang first", "oldest last, as the timeline reads")
+
+    def test_an_empty_note_is_refused(self):
+        with self.assertRaises(orders.OrderError):
+            orders.add_note(self.order, {"note": "   "})
+
+    def test_you_can_correct_your_own_note(self):
+        entry = orders.add_note(self.order, {"note": "rang Mr Sato"})
+        orders.update_note(entry, {"note": "rang Mr Sato — 2 weeks",
+                                   "changed_at": "2026-08-30"})
+        line = self.mine()[0]
+        self.assertEqual(line["note"], "rang Mr Sato — 2 weeks")
+        self.assertTrue(line["changed_at"].startswith("2026-08-30"))
+
+    def test_and_remove_it(self):
+        entry = orders.add_note(self.order, {"note": "wrong order, sorry"})
+        self.assertEqual(orders.delete_note(entry), self.order)
+        self.assertEqual(self.mine(), [])
+
+    def test_a_note_cannot_be_emptied_by_editing(self):
+        entry = orders.add_note(self.order, {"note": "rang"})
+        with self.assertRaises(orders.OrderError):
+            orders.update_note(entry, {"note": ""})
+
+    def test_what_the_app_wrote_cannot_be_changed_or_removed(self):
+        orders.update_order(self.order, {"status": "READY TO SHIP"},
+                            note="finished early")
+        written = [h for h in self.history() if not h["by_hand"]]
+        self.assertEqual(len(written), 2, "created, and the move")
+        for line in written:
+            with self.assertRaises(orders.OrderError):
+                orders.update_note(line["id"], {"note": "rewritten"})
+            with self.assertRaises(orders.OrderError):
+                orders.delete_note(line["id"])
+        self.assertEqual(len(self.history()), 2, "nothing was removed")
+
+    def test_a_history_written_before_the_column_existed_still_opens(self):
+        """An older order book gains the column and locks what it holds."""
+        conn = db.connect()
+        with conn:
+            conn.execute("ALTER TABLE status_history DROP COLUMN by_hand")
+        db.init_db()
+        line = self.history()[0]
+        self.assertEqual(line["by_hand"], 0)
+        with self.assertRaises(orders.OrderError):
+            orders.delete_note(line["id"])
+        orders.add_note(self.order, {"note": "still works"})
+        self.assertEqual(len(self.mine()), 1)
+
+    def test_a_line_that_is_gone_says_so(self):
+        entry = orders.add_note(self.order, {"note": "gone"})
+        orders.delete_note(entry)
+        with self.assertRaises(orders.OrderError):
+            orders.update_note(entry, {"note": "back again"})
+
+    def test_deleting_the_order_takes_its_notes_with_it(self):
+        orders.add_note(self.order, {"note": "a note"})
+        orders.delete_order(self.order)
+        self.assertEqual(
+            db.connect().execute(
+                "SELECT COUNT(*) FROM status_history").fetchone()[0], 0)
+
+
+class TestCorrectingALogEntry(unittest.TestCase):
+    """A typo in the dispute or folder log is fixed, not deleted and retyped."""
+
+    def setUp(self):
+        fresh_db()
+        self.order = orders.create_order({
+            "company": "Sakura Denshi KK", "order_no": "OT-1"})
+        self.case = cases.open_case({"order_id": self.order,
+                                     "title": "12 boards, open circuits"})
+        self.folder = threads.open_folder({"company": "Sakura Denshi KK",
+                                           "topic": "RFQ for a new board"})
+
+    def test_a_case_entry_can_be_corrected_and_keeps_its_date(self):
+        entry = cases.add_entry(self.case, {
+            "summary": "clled Ha-eun", "happened_at": "2026-09-01"})
+        cases.update_entry(entry, {"summary": "called Ha-eun"})
+        logged = [e for e in cases.get_case(self.case)["entries"]
+                  if e["id"] == entry][0]
+        self.assertEqual(logged["summary"], "called Ha-eun")
+        self.assertEqual(logged["happened_at"], "2026-09-01")
+
+    def test_a_folder_entry_can_be_corrected_too(self):
+        entry = threads.add_entry(self.folder, {"summary": "snt the quote"})
+        threads.update_entry(entry, {"summary": "sent the quote",
+                                     "follow_up_at": "2026-10-01"})
+        logged = [e for e in threads.get_folder(self.folder)["entries"]
+                  if e["id"] == entry][0]
+        self.assertEqual(logged["summary"], "sent the quote")
+        self.assertEqual(logged["follow_up_at"], "2026-10-01")
+
+    def test_an_entry_cannot_be_emptied(self):
+        entry = cases.add_entry(self.case, {"summary": "called"})
+        with self.assertRaises(cases.CaseError):
+            cases.update_entry(entry, {"summary": "  "})
+        entry = threads.add_entry(self.folder, {"summary": "called"})
+        with self.assertRaises(threads.ThreadError):
+            threads.update_entry(entry, {"summary": ""})
+
+    def test_what_is_not_asked_for_is_left_alone(self):
+        entry = cases.add_entry(self.case, {
+            "summary": "called", "who": "Ha-eun", "detail": "agreed rework",
+            "follow_up_at": "2026-10-05"})
+        cases.update_entry(entry, {"summary": "called twice"})
+        logged = [e for e in cases.get_case(self.case)["entries"]
+                  if e["id"] == entry][0]
+        self.assertEqual(logged["who"], "Ha-eun")
+        self.assertEqual(logged["detail"], "agreed rework")
+        self.assertEqual(logged["follow_up_at"], "2026-10-05")
+
+    def test_the_screen_offers_the_edit(self):
+        for name in ("cases.js", "folders.js"):
+            body = (ROOT / "web" / name).read_text(encoding="utf-8")
+            self.assertIn("data-edit-entry", body, name)
+            self.assertIn("SAVE THE CHANGE", body, name)
 
 
 class TestWhatNeedsDoingToday(unittest.TestCase):
@@ -3945,9 +4235,10 @@ class TestTheNetworkView(unittest.TestCase):
         detail = self.graph.view(f"order/{self.late}")["detail"]
         self.assertEqual(detail["pipeline"]["here"], "IN PRODUCTION")
         self.assertIn("OVERDUE", detail["alerts"])
-        rows = dict(detail["rows"])
-        self.assertEqual(rows["PRODUCT NO"], "PN-1")
-        self.assertEqual(rows["ORDER NO"], "OT-1")
+        rows = {tuple(k) if isinstance(k, list) else k: v
+                for k, v in detail["rows"]}
+        self.assertEqual(rows[("관리번호", "CONTROL NO")], "PN-1")
+        self.assertEqual(rows[("주문번호", "ORDER NO")], "OT-1")
         self.assertEqual(detail["title"], "PN-1")
         links = dict(detail["links"])
         self.assertEqual(links["OPEN THE ORDER"], f"order/{self.late}")

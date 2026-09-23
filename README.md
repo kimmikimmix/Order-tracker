@@ -105,15 +105,29 @@ confirm the mapping before anything is written. Re-importing a fresh export
 updates the orders already on file, matched on order number, which is how you
 refresh statuses in bulk.
 
-**Names an order by what is being made.** Every order carries a product
-number and a product name — a part number, a model, or whichever of the two
-you actually use. The product name is what an order is called everywhere it
-appears: the orders page, the network, the today list, the email tray, the
-folders, the disputes, the documents and the printed sheet, with the order
-number following it quietly. An order with no product yet keeps its number as
-its name. Both fields are searchable, both come across from a spreadsheet
-import, and the order form offers everything you have made before so a repeat
-board is picked rather than spelled differently the second time.
+**Names an order by what is being made.** Every order carries four numbers,
+each labelled in Korean with the English name underneath:
+
+| | |
+| --- | --- |
+| 모델 이름 | PRODUCT NAME — what the board is called |
+| 관리번호 | CONTROL NO — the number the model is managed by |
+| 주문번호 | ORDER NO — the order's own number |
+| 작지번호 | WORK ORDER NO — the number the floor works to |
+
+모델 이름 is what an order is called everywhere it appears: the orders page,
+the network, the today list, the email tray, the folders, the disputes, the
+documents and the printed sheet, with the numbers following it quietly. An
+order with no model name yet keeps its 관리번호, or failing that its 주문번호,
+as its name — a line is never blank. All four are searchable, all four come
+across from a spreadsheet import (Korean column headings included — 주문번호,
+거래처, 모델 이름, 관리번호, 작지번호, 납기일, 담당자 and the rest), and the
+order form offers everything you have made before so a repeat board is picked
+rather than spelled differently the second time.
+
+The words themselves live in `ordertracker/config.py` under `FIELD_LABELS`.
+Change one and every screen, the printed sheet and the exported spreadsheet
+follow.
 
 **Fills in what it already knows.** A new order is dated today and its
 quotation section carries the customer's contact person across as soon as
@@ -170,6 +184,17 @@ reprices an old quote behind your back.
 
 **PRINT SHEET** opens a clean page on white paper — the specification, the
 costing and the documents on file — ready for `Ctrl+P` or saving as a PDF.
+
+**HISTORY** is the order's own record. Everything the app does writes itself
+down there — the order being created, and every move from one stage to the
+next, with whatever note you typed when you moved it. Those lines are the
+record of what happened and cannot be edited or removed.
+
+Above them is a box for a line of your own: a call, a promise made, a reason.
+Date it the day it happened — backdating is fine, it lands in the right place
+on the timeline — and put your name beside it. Your own notes carry a **NOTE**
+chip and an **EDIT** and **DEL** button, so a typo is corrected rather than
+left standing. The app's lines carry neither.
 
 ## The inbox: filing email without a mail server
 
@@ -289,10 +314,14 @@ value claimed in won, who is handling it, when an answer is due, and — as
 they become known — the root cause and the resolution.
 
 **The log.** Every call, mail, meeting, visit, note, action and decision, each
-with its own date and the person on the other end. Entries are added, never
-overwritten. Anything that needs chasing gets a follow-up date, and those
-appear on the CASES page and on the dashboard, with the late ones in red,
-until they are ticked off.
+with its own date and the person on the other end. Anything that needs chasing
+gets a follow-up date, and those appear on the CASES page and on the
+dashboard, with the late ones in red, until they are ticked off.
+
+**EDIT** beside an entry brings it back up into the box it was typed in — the
+same box, all six fields — so a typo or a wrong date is corrected in place and
+the entry keeps the day it happened. **DEL** removes one outright. The folder
+log works the same way.
 
 An email in the tray can be logged straight into a case, or can open a new
 one with its subject and summary already filled in.

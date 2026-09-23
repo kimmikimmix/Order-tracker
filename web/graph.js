@@ -319,7 +319,9 @@ function showGraphDetail(node) {
       </div>` : ''}
       <table class="grid calc"><tbody>
         ${(detail.rows || []).map(([label, value]) => `
-          <tr><td class="ck">${esc(label)}</td>
+          <tr><td class="ck">${Array.isArray(label)
+                ? `${esc(label[0])}<span class="lbl-en">${esc(label[1])}</span>`
+                : esc(label)}</td>
               <td>${money.has(label) ? esc(moneyOr(value)) : esc(String(value))}</td></tr>`).join('')}
       </tbody></table>
       <div class="glinks">
