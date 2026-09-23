@@ -14,7 +14,7 @@ from . import config, drives
 
 _local = threading.local()
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def now() -> str:
@@ -464,7 +464,7 @@ CREATE TABLE IF NOT EXISTS meta (
 -- the application, which is simpler to reason about than external-content
 -- tables when rows are edited from several places.
 CREATE VIRTUAL TABLE IF NOT EXISTS orders_fts USING fts5(
-    order_no, po_number, company, description, notes, owner,
+    order_no, po_number, company, product, description, notes, owner,
     order_id UNINDEXED,
     tokenize = 'unicode61'
 );
@@ -480,6 +480,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
 # Columns added after the first release. SQLite has no "ADD COLUMN IF NOT
 # EXISTS", so each is applied only when the table is missing it.
 LATER_COLUMNS = {
+    "orders": [
+        ("product_code", "TEXT"),   # the part number the board is known by
+        ("product_name", "TEXT"),   # or the name, when there is no number
+    ],
     "emails": [
         ("thread_id", "INTEGER"),   # the folder it was filed into, if any
     ],
@@ -506,10 +510,29 @@ def _add_missing_columns(conn) -> list[str]:
     return added
 
 
+def _stale_search_index(conn) -> bool:
+    """True when the search index was built before a column existed.
+
+    An FTS table cannot have a column added to it, so the only way to
+    start indexing something new is to throw the index away and build it
+    again. It holds nothing that is not in the orders themselves, so
+    losing it costs a second, not any data.
+    """
+    try:
+        columns = {row["name"] for row in conn.execute(
+            "PRAGMA table_info(orders_fts)")}
+    except sqlite3.Error:
+        return False
+    return bool(columns) and "product" not in columns
+
+
 def init_db() -> None:
     """Create the schema if it is not there yet, and tidy known bad values."""
     conn = connect()
+    rebuild = _stale_search_index(conn)
     with conn:
+        if rebuild:
+            conn.execute("DROP TABLE IF EXISTS orders_fts")
         conn.executescript(SCHEMA)
         _add_missing_columns(conn)
         conn.execute(
@@ -518,6 +541,8 @@ def init_db() -> None:
             (str(SCHEMA_VERSION),),
         )
         repair_dates(conn)
+    if rebuild:
+        rebuild_search_index()
 
 
 def touch(conn, key: str = "last_saved") -> str:
@@ -574,8 +599,8 @@ def reindex_order(conn: sqlite3.Connection, order_id: int) -> None:
     """Rewrite the search row for one order."""
     conn.execute("DELETE FROM orders_fts WHERE order_id = ?", (order_id,))
     row = conn.execute(
-        """SELECT o.id, o.order_no, o.po_number, o.description, o.notes, o.owner,
-                  c.name AS company
+        """SELECT o.id, o.order_no, o.po_number, o.product_code, o.product_name,
+                  o.description, o.notes, o.owner, c.name AS company
            FROM orders o JOIN companies c ON c.id = o.company_id
            WHERE o.id = ?""",
         (order_id,),
@@ -583,13 +608,14 @@ def reindex_order(conn: sqlite3.Connection, order_id: int) -> None:
     if row is None:
         return
     conn.execute(
-        """INSERT INTO orders_fts(order_no, po_number, company, description,
-                                  notes, owner, order_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO orders_fts(order_no, po_number, company, product,
+                                  description, notes, owner, order_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             row["order_no"] or "",
             row["po_number"] or "",
             row["company"] or "",
+            " ".join(filter(None, (row["product_code"], row["product_name"]))),
             row["description"] or "",
             row["notes"] or "",
             row["owner"] or "",

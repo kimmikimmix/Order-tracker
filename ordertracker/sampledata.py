@@ -242,6 +242,9 @@ def load(seed: int = 7) -> dict:
 
         order_id = orders.create_order({
             "order_no": order_no,
+            "product_code": f"PN-{4000 + index * 7}-{'ABCDEF'[index % 6]}",
+            "product_name": product.split(" - ")[-1] if " - " in product
+                            else product,
             "company": company,
             "po_number": po_number if with_po or rng.random() > 0.4 else "",
             "description": product,

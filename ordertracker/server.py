@@ -54,6 +54,7 @@ def api_bootstrap(handler, match):
         "doc_kinds": sorted(config.DOC_KINDS) + ["OTHER"],
         "import_fields": list(importer.FIELDS),
         "companies": _companies(),
+        "products": orders.product_list(),
         "dashboard": _dashboard(),
         "thresholds": {
             "due_soon_days": int(prefs.get("due_soon_days")),
@@ -618,7 +619,8 @@ def api_export(handler, match):
     rows = orders.list_orders(limit=100000)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    columns = ["order_no", "company", "po_number", "description", "status",
+    columns = ["order_no", "company", "po_number", "product_code",
+               "product_name", "description", "status",
                "value", "currency", "order_date", "promise_date", "ship_date",
                "owner", "priority", "doc_count", "notes"]
     writer.writerow(columns + ["alerts"])

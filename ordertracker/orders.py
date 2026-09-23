@@ -7,12 +7,13 @@ import sqlite3
 from . import config, db, geo, pcb, prefs
 
 ORDER_FIELDS = (
-    "order_no", "company_id", "po_number", "description", "status", "value",
-    "currency", "order_date", "promise_date", "ship_date", "owner", "priority",
-    "notes",
+    "order_no", "company_id", "po_number", "product_code", "product_name",
+    "description", "status", "value", "currency", "order_date", "promise_date",
+    "ship_date", "owner", "priority", "notes",
 )
 
 SORTABLE = {
+    "product_code": "o.product_code",
     "order_no": "o.order_no",
     "company": "c.name",
     "po_number": "o.po_number",
@@ -275,13 +276,16 @@ def create_order(data: dict, actor: str = "") -> int:
         try:
             cur = conn.execute(
                 """INSERT INTO orders
-                   (order_no, company_id, po_number, description, status, value,
+                   (order_no, company_id, po_number, product_code,
+                    product_name, description, status, value,
                     currency, order_date, promise_date, ship_date, owner,
                     priority, notes, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     order_no, company_id,
                     (data.get("po_number") or "").strip() or None,
+                    (data.get("product_code") or "").strip() or None,
+                    (data.get("product_name") or "").strip() or None,
                     data.get("description") or None,
                     status,
                     _as_number(data.get("value")),
@@ -482,6 +486,22 @@ def save_company(data: dict) -> int:
         )
         db.touch(conn)
         return cur.lastrowid
+
+
+def product_list(limit: int = 400) -> list[dict]:
+    """Every product number and name already on an order, most used first.
+
+    Feeds the drop-downs on the order form, so a board that has been made
+    before is picked rather than typed differently the second time.
+    """
+    rows = db.connect().execute(
+        """SELECT product_code AS code, product_name AS name, COUNT(*) AS used
+           FROM orders
+           WHERE COALESCE(product_code, '') <> '' OR COALESCE(product_name, '') <> ''
+           GROUP BY product_code, product_name
+           ORDER BY used DESC, product_code, product_name
+           LIMIT ?""", (limit,))
+    return [dict(row) for row in rows]
 
 
 # --- Search ----------------------------------------------------------------

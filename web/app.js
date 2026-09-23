@@ -458,6 +458,7 @@ const COLUMNS = [
   { key: 'order_no',     label: 'ORDER',    sort: 'order_no' },
   { key: 'company',      label: 'CUSTOMER', sort: 'company' },
   { key: 'po_number',    label: 'CUST PO',  sort: 'po_number' },
+  { key: 'product',      label: 'PRODUCT',  sort: 'product_code' },
   { key: 'description',  label: 'DESCRIPTION' },
   { key: 'status',       label: 'STATUS',   sort: 'status' },
   { key: 'promise_date', label: 'PROMISED', sort: 'promise_date' },
@@ -582,6 +583,9 @@ function rowHTML(o, index) {
     <td style="color:var(--amber)">${esc(o.order_no)}</td>
     <td>${esc(o.company)}</td>
     <td style="color:var(--dim)">${esc(o.po_number || '—')}</td>
+    <td>${esc(o.product_code || '')}${o.product_code && o.product_name ? ' ' : ''}
+      ${o.product_name ? `<span style="color:var(--dim)">${esc(o.product_name)}</span>` : ''}
+      ${!o.product_code && !o.product_name ? '<span style="color:var(--dimmer)">—</span>' : ''}</td>
     <td style="color:var(--dim)">${esc(o.description || '')}</td>
     <td><span class="chip ${cls(o.status)}">${esc(o.status)}</span></td>
     <td>${esc(o.promise_date || '—')}</td>
@@ -1052,6 +1056,10 @@ function renderDetail() {
         <div class="kv">
           <div class="k">CUSTOMER PO</div>
           <div class="v"><input id="e-po_number" value="${esc(o.po_number || '')}"></div>
+          <div class="k">PRODUCT NO</div>
+          <div class="v"><input id="e-product_code" value="${esc(o.product_code || '')}"></div>
+          <div class="k">PRODUCT NAME</div>
+          <div class="v"><input id="e-product_name" value="${esc(o.product_name || '')}"></div>
           <div class="k">DESCRIPTION</div>
           <div class="v"><input id="e-description" value="${esc(o.description || '')}"></div>
           <div class="k">VALUE</div>
@@ -1297,8 +1305,9 @@ async function changeStatus(newStatus) {
 async function saveOrderEdits() {
   const o = S.openOrder;
   const body = {};
-  ['po_number', 'description', 'value', 'currency', 'order_date',
-   'promise_date', 'ship_date', 'owner', 'priority', 'notes'].forEach(field => {
+  ['po_number', 'product_code', 'product_name', 'description', 'value',
+   'currency', 'order_date', 'promise_date', 'ship_date', 'owner', 'priority',
+   'notes'].forEach(field => {
     const input = $('#e-' + field);
     if (input) body[field] = input.value;
   });
@@ -1416,6 +1425,14 @@ function newOrderModal(openTab) {
         <div><input id="n-company" list="companylist" placeholder="start typing…">
           <datalist id="companylist">
             ${S.boot.companies.map(c => `<option value="${esc(c.name)}">`).join('')}
+          </datalist>
+          <datalist id="productcodelist">
+            ${(S.boot.products || []).filter(p => p.code).map(p =>
+              `<option value="${esc(p.code)}">${esc(p.name || '')}</option>`).join('')}
+          </datalist>
+          <datalist id="productnamelist">
+            ${(S.boot.products || []).filter(p => p.name).map(p =>
+              `<option value="${esc(p.name)}">`).join('')}
           </datalist></div>
 
         <div class="lbl">CUSTOMER PO</div><div><input id="n-po_number"></div>
@@ -1424,6 +1441,13 @@ function newOrderModal(openTab) {
           ${S.boot.all_statuses.map(s =>
             `<option ${s === S.boot.pipeline[1] ? 'selected' : ''}>${esc(s)}</option>`).join('')}
         </select></div>
+
+        <div class="lbl">PRODUCT NO</div>
+        <div><input id="n-product_code" list="productcodelist"
+          placeholder="part number"></div>
+        <div class="lbl">PRODUCT NAME</div>
+        <div><input id="n-product_name" list="productnamelist"
+          placeholder="what the board is called"></div>
 
         <div class="lbl">DESCRIPTION</div>
         <div class="wide"><input id="n-description" placeholder="what was ordered"></div>
@@ -1507,9 +1531,9 @@ function newOrderModal(openTab) {
 
 async function createOrder() {
   const body = {};
-  ['order_no', 'company', 'po_number', 'status', 'description', 'value',
-   'currency', 'order_date', 'promise_date', 'owner', 'priority',
-   'notes'].forEach(field => {
+  ['order_no', 'company', 'po_number', 'product_code', 'product_name',
+   'status', 'description', 'value', 'currency', 'order_date', 'promise_date',
+   'owner', 'priority', 'notes'].forEach(field => {
     const input = $('#n-' + field);
     if (input) body[field] = input.value;
   });

@@ -123,6 +123,8 @@ def _spec_blocks(order, spec) -> str:
     <table class="kv">{_rows([
         ("QUOTE DATE", _text(values.get("quote_date"))),
         ("QUOTE REF", _text(values.get("quote_ref"))),
+        ("PRODUCT NO", _text(order.get("product_code"))),
+        ("PRODUCT NAME", _text(order.get("product_name"))),
         ("CUSTOMER", _text(order.get("company"))),
         ("CONTACT", _text(values.get("contact_person") or order.get("contact_name"))),
         ("CUSTOMER PO", _text(order.get("po_number"))),
@@ -276,6 +278,9 @@ def render(order_id: int) -> str | None:
     <h1>{html.escape(order['order_no'])}</h1>
     <p class="sub">{html.escape(order.get('company') or '')}
       {(' · ' + html.escape(where)) if where else ''}<br>
+      {html.escape(' '.join(filter(None, (order.get('product_code'),
+                                          order.get('product_name')))))}
+      {'<br>' if (order.get('product_code') or order.get('product_name')) else ''}
       {html.escape(order.get('description') or '')}</p>
   </div>
   <div style="text-align:right">

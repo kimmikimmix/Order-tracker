@@ -3506,3 +3506,91 @@ class TestTheUpdateScript(unittest.TestCase):
                         "the data folder must be left alone")
         self.assertNotIn("settings.json", copied)
         self.assertNotIn("portable.txt", copied)
+
+
+class TestProductOnAnOrder(unittest.TestCase):
+    """The part number, or the name, the board is known by."""
+
+    def setUp(self):
+        fresh_db()
+
+    def make(self, **extra):
+        data = {"order_no": "OT-1", "company": "Sakura Denshi KK",
+                "status": "CONFIRMED"}
+        data.update(extra)
+        return orders.create_order(data)
+
+    def test_it_is_kept_and_given_back(self):
+        order = orders.get_order(self.make(product_code="PN-4471-B",
+                                           product_name="motor controller"))
+        self.assertEqual(order["product_code"], "PN-4471-B")
+        self.assertEqual(order["product_name"], "motor controller")
+
+    def test_either_one_on_its_own_is_fine(self):
+        just_a_name = orders.get_order(self.make(order_no="OT-2",
+                                                 product_name="sensor tail"))
+        self.assertIsNone(just_a_name["product_code"])
+        self.assertEqual(just_a_name["product_name"], "sensor tail")
+        blank = orders.get_order(self.make(order_no="OT-3", product_code="  "))
+        self.assertIsNone(blank["product_code"])
+
+    def test_it_can_be_changed_afterwards(self):
+        order_id = self.make(product_code="PN-1")
+        orders.update_order(order_id, {"product_code": "PN-2",
+                                       "product_name": "renamed"})
+        order = orders.get_order(order_id)
+        self.assertEqual(order["product_code"], "PN-2")
+        self.assertEqual(order["product_name"], "renamed")
+
+    def test_the_part_number_is_searchable(self):
+        self.make(product_code="PN-4471-B", product_name="motor controller")
+        self.assertEqual(
+            [o["order_no"] for o in orders.search("PN-4471-B")["orders"]],
+            ["OT-1"])
+        self.assertEqual(
+            [o["order_no"] for o in orders.search("motor controller")["orders"]],
+            ["OT-1"])
+
+    def test_an_index_built_before_the_column_existed_is_rebuilt(self):
+        """An FTS table cannot gain a column, so it is thrown away instead."""
+        self.make(product_code="PN-9001")
+
+        # Put the old shape back, the way an order book written before the
+        # column existed would have it.
+        conn = db.connect()
+        with conn:
+            conn.execute("DROP TABLE IF EXISTS orders_fts")
+            conn.execute("""CREATE VIRTUAL TABLE orders_fts USING fts5(
+                order_no, po_number, company, description, notes, owner,
+                order_id UNINDEXED, tokenize = 'unicode61')""")
+        self.assertTrue(db._stale_search_index(conn))
+        self.assertEqual(orders.search("PN-9001")["orders"], [])
+
+        db.init_db()                       # what startup does
+        self.assertFalse(db._stale_search_index(db.connect()))
+        self.assertEqual(
+            [o["order_no"] for o in orders.search("PN-9001")["orders"]],
+            ["OT-1"])
+
+    def test_what_has_been_ordered_before_is_offered(self):
+        self.make(product_code="PN-1", product_name="alpha")
+        self.make(order_no="OT-2", product_code="PN-1", product_name="alpha")
+        self.make(order_no="OT-3", product_code="PN-2", product_name="beta")
+        self.make(order_no="OT-4")
+        listed = orders.product_list()
+        self.assertEqual(listed[0], {"code": "PN-1", "name": "alpha", "used": 2})
+        self.assertEqual(len(listed), 2, "an order with no product adds nothing")
+
+    def test_a_spreadsheet_column_of_part_numbers_is_recognised(self):
+        from ordertracker import importer
+        mapping = importer.suggest_mapping(
+            ["Sales Order #", "Customer", "Part Number", "Model", "Qty"])
+        self.assertEqual(mapping.get("product_code"), 2)
+        self.assertEqual(mapping.get("product_name"), 3)
+
+    def test_the_printed_sheet_names_the_product(self):
+        order_id = self.make(product_code="PN-4471-B",
+                             product_name="motor controller")
+        page = printsheet.render(order_id)
+        self.assertIn("PN-4471-B", page)
+        self.assertIn("motor controller", page)

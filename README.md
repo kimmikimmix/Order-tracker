@@ -85,6 +85,13 @@ confirm the mapping before anything is written. Re-importing a fresh export
 updates the orders already on file, matched on order number, which is how you
 refresh statuses in bulk.
 
+**Knows the product, not just the order.** Every order carries a product
+number and a product name — a part number, a model, or whichever of the two
+you actually use. Both are searchable, both appear in the blotter and on the
+printed sheet, both come across from a spreadsheet import, and the order form
+offers everything you have made before so a repeat board is picked rather
+than spelled differently the second time.
+
 **Fills in what it already knows.** A new order is dated today and its
 quotation section carries the customer's contact person across as soon as
 you pick the customer — both editable, neither guessed twice. Every date box
@@ -753,7 +760,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 276 tests, no dependencies
+python3 -m unittest discover tests     # 284 tests, no dependencies
 ```
 
 The pieces:
