@@ -410,3 +410,108 @@ table.log td {{ vertical-align:top }}
   <span>printed {datetime.now().strftime('%d %b %Y %H:%M')}</span>
 </footer>
 </body></html>"""
+
+
+# --- the folder sheet ------------------------------------------------------
+
+def folder_sheet(folder_id: int) -> str:
+    """A printable summary of one enquiry folder: topic, position, log.
+
+    What you print before a call, so the whole conversation to date fits on
+    one sheet in front of you.
+    """
+    from . import threads
+
+    folder = threads.get_folder(folder_id)
+    if folder is None:
+        return ""
+
+    position = _rows([
+        ("CUSTOMER", _text(folder.get("company"))),
+        ("CONTACT", _text(folder.get("contact_name"))),
+        ("EMAIL", _text(folder.get("contact_email"))),
+        ("KIND", _text(folder.get("kind"))),
+        ("STATUS", _text(folder.get("status"))),
+        ("PRIORITY", _text(folder.get("priority"))),
+        ("OPENED", _text(folder.get("opened_at"))),
+        ("COME BACK TO IT", _text(folder.get("follow_up_at"))),
+        ("CLOSED", _text(folder.get("closed_at"))),
+        ("ORDER", _text(folder.get("order_no"))),
+        ("WORTH", _usd(folder["value_usd"]) if folder.get("value_usd") else "—"),
+        ("HANDLED BY", _text(folder.get("owner"))),
+    ])
+
+    def block(title, text):
+        if not text:
+            return ""
+        return (f"<h2>{html.escape(title)}</h2><p>"
+                + html.escape(str(text)).replace("\n", "<br>") + "</p>")
+
+    entries = "".join(
+        f"""<tr>
+              <td class="nowrap">{_text(entry.get('happened_at'))}</td>
+              <td class="nowrap">{_text(entry.get('kind'))}</td>
+              <td>{_text(entry.get('who'))}</td>
+              <td>{_text(entry.get('summary'))}
+                {('<div class="detail">'
+                  + html.escape(entry['detail']).replace(chr(10), '<br>')
+                  + '</div>') if entry.get('detail') else ''}</td>
+              <td class="nowrap">{
+                  (('DONE ' + str(entry['done_at'])[:10]) if entry.get('done_at')
+                   else _text(entry.get('follow_up_at')))}</td>
+            </tr>"""
+        for entry in sorted(folder["entries"],
+                            key=lambda e: (e.get("happened_at") or "", e["id"]))
+    )
+
+    emails = "".join(
+        f"<li>{_text(str(mail.get('sent_at') or mail.get('filed_at'))[:10])}"
+        f" — {html.escape(mail.get('subject') or '(no subject)')}"
+        f" <i>{html.escape(mail.get('from_name') or mail.get('from_email') or '')}</i></li>"
+        for mail in folder.get("emails", []))
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>{html.escape(folder['ref'])} — {html.escape(folder['topic'])}</title>
+<style>{CSS}
+.detail {{ color:#444; font-size:10.5px; margin-top:3px; white-space:normal }}
+.nowrap {{ white-space:nowrap }}
+table.log th {{ background:#f0f0f0; text-align:left }}
+table.log td {{ vertical-align:top }}
+</style></head>
+<body>
+<div class="toolbar"><button onclick="window.print()">PRINT</button></div>
+
+<div class="head">
+  <div>
+    <h1>{html.escape(folder['ref'])}</h1>
+    <p class="sub">{html.escape(folder['topic'])}<br>
+      {html.escape(folder.get('company') or '')}</p>
+  </div>
+  <div style="text-align:right">
+    <div class="badge">{html.escape(folder['status'])}</div>
+    <p class="sub" style="margin-top:8px">ORDER TRACKER<br>
+      {datetime.now().strftime('%d %b %Y')}</p>
+  </div>
+</div>
+
+<h2>The folder</h2>
+<table>{position}</table>
+
+{block('What they want', folder.get('summary'))}
+{block('Where it stands', folder.get('situation'))}
+
+<h2>Log of communications and actions</h2>
+<table class="log">
+  <tr><th>DATE</th><th>KIND</th><th>WHO</th><th>WHAT HAPPENED</th>
+      <th>FOLLOW-UP</th></tr>
+  {entries or '<tr><td colspan="5" class="none">nothing logged yet</td></tr>'}
+</table>
+
+{'<h2>Email in this folder</h2><ul class="docs">' + emails + '</ul>' if emails else ''}
+
+<footer>
+  <span>{html.escape(folder['ref'])} · {html.escape(folder.get('company') or '')}</span>
+  <span>printed {datetime.now().strftime('%d %b %Y %H:%M')}</span>
+</footer>
+</body></html>"""

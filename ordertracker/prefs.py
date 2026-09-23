@@ -73,6 +73,14 @@ DEFAULTS = {
     # A new case is chased by this date unless you set another.
     "case_due_days": 7,
 
+    # --- enquiry folders ---------------------------------------------------
+    "thread_kinds": ["ENQUIRY", "QUOTE REQUEST", "SAMPLE", "SPEC QUESTION",
+                     "DELIVERY", "COMPLAINT", "GENERAL"],
+    "thread_statuses": ["OPEN", "WAITING ON US", "WAITING ON THEM", "QUOTED",
+                        "WON", "LOST", "CLOSED"],
+    # A new folder is chased by this date unless you set another.
+    "thread_due_days": 3,
+
     # --- housekeeping ------------------------------------------------------
     # Second home for your data. Empty means backups are not being taken.
     "backup_dir": "",

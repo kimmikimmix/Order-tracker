@@ -16,7 +16,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (backup, cases, config, db, documents, geo, importer, mail,
-               multipart, orders, pcb, prefs, printsheet, relocate, settings)
+               multipart, orders, pcb, prefs, printsheet, relocate, settings,
+               threads)
 
 MAX_BODY_BYTES = config.MAX_UPLOAD_BYTES + (8 * 1024 * 1024)
 
@@ -52,7 +53,7 @@ def api_bootstrap(handler, match):
         "terminal_statuses": sorted(config.TERMINAL_STATUSES),
         "doc_kinds": sorted(config.DOC_KINDS) + ["OTHER"],
         "import_fields": list(importer.FIELDS),
-        "companies": orders.list_companies(),
+        "companies": _companies(),
         "dashboard": _dashboard(),
         "thresholds": {
             "due_soon_days": int(prefs.get("due_soon_days")),
@@ -64,6 +65,8 @@ def api_bootstrap(handler, match):
         "case_severities": prefs.get("case_severities"),
         "case_statuses": prefs.get("case_statuses"),
         "case_entry_kinds": prefs.get("case_entry_kinds"),
+        "thread_kinds": prefs.get("thread_kinds"),
+        "thread_statuses": prefs.get("thread_statuses"),
         "countries": geo.country_list(),
         "cities": geo.city_list(),
         "spec_fields": [{"name": n, "kind": k, "label": pcb.LABELS.get(n, n)}
@@ -79,11 +82,20 @@ def api_ping(handler, match):
     return {"app": "order-tracker", "data": str(config.DATA_DIR)}
 
 
+def _companies() -> list[dict]:
+    """The customer list, with how many folders each one has running."""
+    counts = threads.counts_by_company()
+    return [company | {"folders": counts.get(company["id"], {}).get("total", 0),
+                       "open_folders": counts.get(company["id"], {}).get("open", 0)}
+            for company in orders.list_companies()]
+
+
 def _dashboard() -> dict:
     """The blotter's own figures, plus the trays that need attention."""
     board = orders.dashboard()
     board["mail"] = mail.tray()
     board["cases"] = cases.summary()
+    board["folders"] = threads.summary()
     return board
 
 
@@ -155,7 +167,7 @@ def api_order_delete(handler, match):
 
 @route("GET", r"/api/companies")
 def api_companies(handler, match):
-    return {"companies": orders.list_companies()}
+    return {"companies": _companies()}
 
 
 @route("POST", r"/api/companies")
@@ -164,7 +176,7 @@ def api_company_save(handler, match):
         company_id = orders.save_company(handler.json_body())
     except orders.OrderError as exc:
         raise ApiError(str(exc)) from exc
-    return {"ok": True, "id": company_id, "companies": orders.list_companies()}
+    return {"ok": True, "id": company_id, "companies": _companies()}
 
 
 # --- API: search -----------------------------------------------------------
@@ -369,6 +381,104 @@ def api_mail_assign(handler, match):
 def api_mail_delete(handler, match):
     keep = handler.query.get("keep_document") == "1"
     mail.delete(int(match.group(1)), with_document=not keep)
+    return {"ok": True}
+
+
+# --- API: enquiry folders --------------------------------------------------
+
+@route("GET", r"/api/threads")
+def api_threads(handler, match):
+    q = handler.query
+    days = int(q.get("days") or prefs.get("due_soon_days") or 7)
+    return {
+        "folders": threads.list_folders(
+            company_id=_int_or_none(q.get("company_id")),
+            status=q.get("status") or None,
+            open_only=q.get("open") == "1",
+            query=q.get("q") or None),
+        "follow_ups": threads.follow_ups(days),
+        "due": threads.due_folders(days),
+        "summary": threads.summary(),
+    }
+
+
+@route("POST", r"/api/threads")
+def api_thread_open(handler, match):
+    data = handler.json_body()
+    try:
+        folder_id = threads.open_folder(data, actor=str(data.get("actor") or ""))
+    except threads.ThreadError as exc:
+        raise ApiError(str(exc)) from exc
+    return {"ok": True, "id": folder_id, "folder": threads.get_folder(folder_id)}
+
+
+@route("GET", r"/api/threads/(\d+)")
+def api_thread_detail(handler, match):
+    folder = threads.get_folder(int(match.group(1)))
+    if folder is None:
+        raise ApiError("No such folder.", HTTPStatus.NOT_FOUND)
+    return folder
+
+
+@route("POST", r"/api/threads/(\d+)")
+def api_thread_update(handler, match):
+    data = handler.json_body()
+    try:
+        return {"ok": True, "folder": threads.update_folder(
+            int(match.group(1)), data, actor=str(data.get("actor") or ""))}
+    except threads.ThreadError as exc:
+        raise ApiError(str(exc)) from exc
+
+
+@route("DELETE", r"/api/threads/(\d+)")
+def api_thread_delete(handler, match):
+    threads.delete_folder(int(match.group(1)))
+    return {"ok": True}
+
+
+@route("POST", r"/api/threads/(\d+)/entries")
+def api_thread_entry_add(handler, match):
+    folder_id = int(match.group(1))
+    try:
+        entry_id = threads.add_entry(folder_id, handler.json_body())
+    except threads.ThreadError as exc:
+        raise ApiError(str(exc)) from exc
+    return {"ok": True, "id": entry_id, "folder": threads.get_folder(folder_id)}
+
+
+@route("POST", r"/api/thread-entries/(\d+)")
+def api_thread_entry_update(handler, match):
+    data = handler.json_body()
+    entry_id = int(match.group(1))
+    if "done" in data:
+        threads.complete_follow_up(entry_id, bool(data["done"]))
+    else:
+        threads.update_entry(entry_id, data)
+    return {"ok": True}
+
+
+@route("DELETE", r"/api/thread-entries/(\d+)")
+def api_thread_entry_delete(handler, match):
+    threads.delete_entry(int(match.group(1)))
+    return {"ok": True}
+
+
+@route("POST", r"/api/threads/(\d+)/emails")
+def api_thread_file_email(handler, match):
+    data = handler.json_body()
+    email_id = _int_or_none(data.get("email_id"))
+    if not email_id:
+        raise ApiError("Choose an email to file.")
+    try:
+        return {"ok": True, "folder": threads.file_email(
+            int(match.group(1)), email_id, actor=str(data.get("actor") or ""))}
+    except threads.ThreadError as exc:
+        raise ApiError(str(exc)) from exc
+
+
+@route("DELETE", r"/api/threads/(\d+)/emails/(\d+)")
+def api_thread_remove_email(handler, match):
+    threads.remove_email(int(match.group(1)), int(match.group(2)))
     return {"ok": True}
 
 
@@ -660,6 +770,15 @@ def print_order(handler, match):
     page = printsheet.render(int(match.group(1)))
     if page is None:
         raise ApiError("No such order.", HTTPStatus.NOT_FOUND)
+    handler.send_bytes(page.encode("utf-8"), "text/html; charset=utf-8")
+    return None
+
+
+@route("GET", r"/print/folder/(\d+)")
+def print_folder(handler, match):
+    page = printsheet.folder_sheet(int(match.group(1)))
+    if not page:
+        raise ApiError("No such folder.", HTTPStatus.NOT_FOUND)
     handler.send_bytes(page.encode("utf-8"), "text/html; charset=utf-8")
     return None
 

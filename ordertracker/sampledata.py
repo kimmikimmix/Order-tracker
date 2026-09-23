@@ -10,7 +10,7 @@ import email.policy
 import random
 import zlib
 
-from . import cases, db, documents, mail as mailbox, orders
+from . import cases, db, documents, mail as mailbox, orders, threads
 
 COMPANIES = [
     # name, code, contact, email, country, city
@@ -335,9 +335,10 @@ def load(seed: int = 7) -> dict:
 
     emails = _demo_inbox()
     disputes = _demo_cases(today)
+    folders = _demo_folders(today)
 
     return {"companies": len(COMPANIES), "orders": created, "documents": docs,
-            "emails": emails, "cases": disputes}
+            "emails": emails, "cases": disputes, "folders": folders}
 
 
 def _demo_inbox() -> int:
@@ -426,5 +427,76 @@ def _demo_cases(today) -> int:
             "root_cause": "One carton left on the packing bench.",
             "resolution": "40 pcs shipped free of charge on the next flight.",
         }, actor="demo")
+        made += 1
+    return made
+
+
+def _demo_folders(today) -> int:
+    """Conversations that are not orders yet, in the state they are found in:
+    one waiting on us, one waiting on them, one already won."""
+    day = datetime.timedelta(days=1)
+    plan = [
+        {
+            "company": "Acme Components Ltd",
+            "topic": "RFQ — 6 layer 1.6mm ENIG, 2000 pcs per lot",
+            "summary": "Price and lead time for a new 6L board, three lots "
+                       "expected this year. Impedance controlled.",
+            "situation": "Waiting on the factory for panel utilisation before "
+                         "the price can be finalised.",
+            "kind": "QUOTE REQUEST", "status": "WAITING ON US",
+            "value_usd": 24000, "opened": 4, "due": 0,
+            "log": [("EMAIL IN", 4, "RFQ received with gerbers", None),
+                    ("CALL", 2, "Asked whether 1.55mm is acceptable", None),
+                    ("ACTION", 1, "Get the panel count from the factory", 0)],
+        },
+        {
+            "company": "Kestrel Marine Systems",
+            "topic": "Sample request — 4 layer flex, 10 pcs",
+            "summary": "Wants ten samples before committing to the production "
+                       "order. Asked about bend radius.",
+            "situation": "Samples shipped; waiting to hear how they tested.",
+            "kind": "SAMPLE", "status": "WAITING ON THEM",
+            "value_usd": 1800, "opened": 12, "due": 2,
+            "log": [("EMAIL IN", 12, "Sample request with drawing", None),
+                    ("EMAIL OUT", 9, "Quoted the samples and the tooling", None),
+                    ("NOTE", 5, "Samples shipped, tracking MF-88213", None),
+                    ("ACTION", 5, "Chase their test result", 2)],
+        },
+        {
+            "company": "Hanwoo Electronics",
+            "topic": "Stack-up question — 8 layer, controlled impedance 50Ω",
+            "summary": "Engineering asked whether our standard stack-up meets "
+                       "50Ω single-ended with 3 mil traces.",
+            "situation": "Answered with the proposed stack-up; they confirmed "
+                         "and placed the order.",
+            "kind": "SPEC QUESTION", "status": "WON",
+            "value_usd": 31500, "opened": 26, "due": None,
+            "log": [("EMAIL IN", 26, "Impedance question from their engineer", None),
+                    ("EMAIL OUT", 24, "Sent the proposed stack-up", None),
+                    ("DECISION", 21, "They accepted and raised the PO", None)],
+        },
+    ]
+
+    made = 0
+    for item in plan:
+        folder_id = threads.open_folder({
+            "company": item["company"], "topic": item["topic"],
+            "summary": item["summary"], "situation": item["situation"],
+            "kind": item["kind"], "value_usd": item["value_usd"],
+            "opened_at": (today - item["opened"] * day).isoformat(),
+            "follow_up_at": ((today + item["due"] * day).isoformat()
+                             if item["due"] is not None else ""),
+            "owner": "YJ",
+        }, actor="demo")
+        for kind, days_ago, summary, follow_up in item["log"]:
+            threads.add_entry(folder_id, {
+                "kind": kind, "who": "YJ",
+                "happened_at": (today - days_ago * day).isoformat(),
+                "summary": summary,
+                "follow_up_at": ((today + follow_up * day).isoformat()
+                                 if follow_up is not None else "")})
+        if item["status"] != "OPEN":
+            threads.update_folder(folder_id, {"status": item["status"]},
+                                  actor="demo")
         made += 1
     return made

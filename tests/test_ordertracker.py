@@ -26,9 +26,9 @@ config.DOCS_DIR = _TMP / "documents"
 config.DB_PATH = _TMP / "test.db"
 
 import fixtures  # noqa: E402
-from ordertracker import (backup, cases, db, documents, geo,  # noqa: E402
-                          importer, mail, multipart, orders, outlook, pcb,
-                          prefs, printsheet, sampledata)
+from ordertracker import (backup, cases, chase, db, documents,  # noqa: E402
+                          geo, importer, mail, multipart, orders, outlook,
+                          pcb, prefs, printsheet, sampledata, threads)
 from ordertracker.extract import extract_text  # noqa: E402
 
 
@@ -42,8 +42,9 @@ def fresh_db():
     conn = db.connect()
     with conn:
         for table in ("status_history", "documents", "order_specs",
-                      "case_entries", "cases", "emails", "orders",
-                      "companies", "orders_fts", "documents_fts"):
+                      "case_entries", "cases", "thread_entries", "threads",
+                      "emails", "orders", "companies", "orders_fts",
+                      "documents_fts"):
             conn.execute(f"DELETE FROM {table}")
         conn.execute("DELETE FROM meta WHERE key = 'prefs'")
     prefs.forget_cache()
@@ -3117,3 +3118,205 @@ class TestUpdatingOneCopyFromAnother(unittest.TestCase):
         fresh = self.holder / "fresh"
         self.relocate.update_app(self.new, fresh)
         self.assertTrue((fresh / "run.py").exists())
+
+
+# ------------------------------------------------------------ the folders
+
+class TestFolders(unittest.TestCase):
+    """A folder per running conversation with a customer."""
+
+    def setUp(self):
+        fresh_db()
+        self.company = orders.save_company({
+            "name": "Sakura Denshi KK",
+            "contact_email": "sato@sakura-denshi.example"})
+
+    def open_one(self, **extra):
+        data = {"company": "Sakura Denshi KK",
+                "topic": "RFQ — 6 layer 1.6mm ENIG, 2000 pcs",
+                "summary": "Price and lead time for a new board.",
+                "kind": "QUOTE REQUEST"}
+        data.update(extra)
+        return threads.open_folder(data, actor="YJ")
+
+    def letter(self, subject="RFQ for a new 6 layer board"):
+        return (f"From: Kenji Sato <sato@sakura-denshi.example>\r\n"
+                f"To: sales@ourpcb.example\r\nSubject: {subject}\r\n"
+                "Date: Mon, 21 Sep 2026 09:30:00 +0900\r\n"
+                "Content-Type: text/plain; charset=\"utf-8\"\r\n\r\n"
+                "Could you quote 2000 pieces per lot?\r\n").encode()
+
+    def test_a_folder_needs_a_topic_and_a_customer(self):
+        with self.assertRaises(threads.ThreadError):
+            threads.open_folder({"company": "Sakura Denshi KK", "topic": "  "})
+        with self.assertRaises(threads.ThreadError):
+            threads.open_folder({"topic": "no customer"})
+
+    def test_opening_one_records_it_and_starts_the_log(self):
+        folder = threads.get_folder(self.open_one())
+        self.assertTrue(folder["ref"].startswith("F-"))
+        self.assertEqual(folder["company"], "Sakura Denshi KK")
+        self.assertEqual(folder["kind"], "QUOTE REQUEST")
+        self.assertTrue(folder["open"])
+        self.assertTrue(folder["follow_up_at"], "a folder should come with a "
+                                                "date to come back to it")
+        self.assertEqual(len(folder["entries"]), 1)
+        self.assertIn("Folder opened", folder["entries"][0]["summary"])
+
+    def test_references_count_up_within_the_year(self):
+        first = threads.get_folder(self.open_one())["ref"]
+        second = threads.get_folder(self.open_one(topic="another"))["ref"]
+        self.assertEqual(int(second[-3:]), int(first[-3:]) + 1)
+
+    def test_an_unknown_customer_is_created_rather_than_refused(self):
+        folder = threads.get_folder(self.open_one(company="Brand New Buyer Oy"))
+        self.assertEqual(folder["company"], "Brand New Buyer Oy")
+
+    def test_the_situation_is_what_it_says_it_is(self):
+        folder_id = self.open_one(situation="Waiting on the factory.")
+        self.assertEqual(threads.get_folder(folder_id)["situation"],
+                         "Waiting on the factory.")
+        threads.update_folder(folder_id, {"situation": "Quote sent."})
+        self.assertEqual(threads.get_folder(folder_id)["situation"],
+                         "Quote sent.")
+
+    def test_an_email_can_be_filed_in_a_folder_and_shows_there(self):
+        folder_id = self.open_one()
+        item = mail.intake("rfq.eml", self.letter())
+        threads.file_email(folder_id, item["id"])
+        folder = threads.get_folder(folder_id)
+        self.assertEqual(len(folder["emails"]), 1)
+        self.assertEqual(folder["emails"][0]["subject"],
+                         "RFQ for a new 6 layer board")
+        logged = [e for e in folder["entries"] if e["kind"] == "EMAIL IN"]
+        self.assertEqual(len(logged), 1)
+        self.assertEqual(logged[0]["email_id"], item["id"])
+
+    def test_filing_the_same_email_twice_does_not_log_it_twice(self):
+        folder_id = self.open_one()
+        item = mail.intake("rfq.eml", self.letter())
+        threads.file_email(folder_id, item["id"])
+        threads.file_email(folder_id, item["id"])
+        folder = threads.get_folder(folder_id)
+        self.assertEqual(len(folder["emails"]), 1)
+        self.assertEqual(
+            len([e for e in folder["entries"] if e["kind"] == "EMAIL IN"]), 1)
+
+    def test_taking_an_email_out_leaves_it_on_file(self):
+        folder_id = self.open_one()
+        item = mail.intake("rfq.eml", self.letter())
+        threads.file_email(folder_id, item["id"])
+        threads.remove_email(folder_id, item["id"])
+        self.assertEqual(threads.get_folder(folder_id)["emails"], [])
+        self.assertIsNotNone(mail.get(item["id"]))
+
+    def test_deleting_a_folder_leaves_its_emails_alone(self):
+        folder_id = self.open_one()
+        item = mail.intake("rfq.eml", self.letter())
+        threads.file_email(folder_id, item["id"])
+        threads.delete_folder(folder_id)
+        self.assertIsNone(threads.get_folder(folder_id))
+        kept = mail.get(item["id"])
+        self.assertIsNotNone(kept)
+        self.assertIsNone(kept["thread_id"])
+
+    def test_winning_it_closes_it_and_logs_the_move(self):
+        folder_id = self.open_one()
+        folder = threads.update_folder(folder_id, {"status": "WON"}, actor="YJ")
+        self.assertFalse(folder["open"])
+        self.assertTrue(folder["closed_at"])
+        self.assertTrue(any("WON" in e["summary"] for e in folder["entries"]))
+
+    def test_reopening_clears_the_closing_date(self):
+        folder_id = self.open_one()
+        threads.update_folder(folder_id, {"status": "LOST"})
+        folder = threads.update_folder(folder_id, {"status": "WAITING ON US"})
+        self.assertIsNone(folder["closed_at"])
+        self.assertTrue(folder["open"])
+
+    def test_the_one_due_soonest_is_listed_first(self):
+        late = self.open_one(topic="late one", follow_up_at="2026-01-01")
+        soon = self.open_one(topic="soon", follow_up_at="2099-01-01")
+        nodate = self.open_one(topic="no date", follow_up_at="")
+        # An empty date means the folder was given the default, so clear it
+        # to make the "no date at all" case.
+        threads.update_folder(nodate, {"follow_up_at": ""})
+        order = [f["id"] for f in threads.list_folders()]
+        self.assertEqual(order[:2], [late, soon])
+        self.assertEqual(order[-1], nodate)
+
+    def test_an_overdue_folder_says_so(self):
+        folder = threads.get_folder(self.open_one(follow_up_at="2020-05-05"))
+        self.assertTrue(folder["overdue"])
+
+    def test_a_settled_folder_stops_being_chased(self):
+        folder_id = self.open_one(follow_up_at="2020-05-05")
+        threads.add_entry(folder_id, {"summary": "chase them",
+                                      "follow_up_at": "2020-05-06"})
+        self.assertEqual(threads.summary()["open"], 1)
+        self.assertEqual(threads.summary()["late_actions"], 1)
+        self.assertEqual(len(threads.due_folders(7)), 1)
+
+        threads.update_folder(folder_id, {"status": "LOST"})
+        self.assertEqual(threads.summary()["open"], 0)
+        self.assertEqual(threads.summary()["late_actions"], 0)
+        self.assertEqual(threads.due_folders(7), [])
+        self.assertEqual(threads.follow_ups(7), [])
+
+    def test_the_customer_list_can_show_how_many_are_running(self):
+        self.open_one()
+        won = self.open_one(topic="already won")
+        threads.update_folder(won, {"status": "WON"})
+        counts = threads.counts_by_company()[self.company]
+        self.assertEqual(counts, {"total": 2, "open": 1})
+
+    def test_searching_looks_inside_the_topic_and_the_summary(self):
+        self.open_one(topic="RFQ — 6 layer ENIG")
+        self.open_one(topic="Sample request", summary="Ten flex samples")
+        self.assertEqual(len(threads.list_folders(query="flex")), 1)
+        self.assertEqual(len(threads.list_folders(query="ENIG")), 1)
+        self.assertEqual(len(threads.list_folders(query="request")), 1)
+
+    def test_the_printed_folder_carries_the_topic_and_the_log(self):
+        folder_id = self.open_one(situation="Waiting on the factory.")
+        threads.add_entry(folder_id, {"kind": "CALL", "who": "Kenji Sato",
+                                      "summary": "Asked about 1.55mm",
+                                      "detail": "He will check with their EMS."})
+        page = printsheet.folder_sheet(folder_id)
+        self.assertIn("RFQ", page)
+        self.assertIn("Waiting on the factory.", page)
+        self.assertIn("Asked about 1.55mm", page)
+        self.assertIn("He will check with their EMS.", page)
+
+    def test_a_folder_for_nothing_is_refused(self):
+        with self.assertRaises(threads.ThreadError):
+            threads.file_email(999999, 1)
+
+
+class TestSharedLog(unittest.TestCase):
+    """The log machinery a case and a folder both use."""
+
+    def setUp(self):
+        fresh_db()
+        self.order = orders.create_order({
+            "company": "Northwind", "order_no": "OT-1", "status": "CONFIRMED"})
+
+    def test_only_the_logs_this_app_keeps_can_be_written_to(self):
+        with self.assertRaises(ValueError):
+            chase.add("orders", 1, {"summary": "not a log"})
+        with self.assertRaises(ValueError):
+            chase.entries("companies; DROP TABLE orders", 1)
+
+    def test_a_case_and_a_folder_keep_their_own_logs(self):
+        case_id = cases.open_case({"order_id": self.order, "title": "defect"})
+        folder_id = threads.open_folder({"company": "Northwind",
+                                         "topic": "enquiry"})
+        cases.add_entry(case_id, {"summary": "only in the case"})
+        threads.add_entry(folder_id, {"summary": "only in the folder"})
+
+        case_log = [e["summary"] for e in cases.get_case(case_id)["entries"]]
+        folder_log = [e["summary"] for e in threads.get_folder(folder_id)["entries"]]
+        self.assertIn("only in the case", case_log)
+        self.assertNotIn("only in the folder", case_log)
+        self.assertIn("only in the folder", folder_log)
+        self.assertNotIn("only in the case", folder_log)

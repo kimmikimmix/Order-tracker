@@ -15,7 +15,7 @@ dashboard can remind you about.
 import datetime
 import re
 
-from . import db, orders, prefs
+from . import chase, db, orders, prefs
 
 OPEN_STATUSES = ("OPEN", "INVESTIGATING", "AWAITING CUSTOMER",
                  "AWAITING FACTORY")
@@ -177,80 +177,29 @@ def update_case(case_id: int, data: dict, actor: str = "") -> dict:
     return get_case(case_id)
 
 
-ENTRY_FIELDS = ("kind", "happened_at", "who", "summary", "detail", "doc_id",
-                "email_id", "follow_up_at", "done_at")
+ENTRY_FIELDS = chase.FIELDS
+LOG = "case_entries"
 
 
 def add_entry(case_id: int, data: dict) -> int:
     """Log one thing that happened, or one action to take."""
-    conn = db.connect()
-    if conn.execute("SELECT 1 FROM cases WHERE id = ?", (case_id,)).fetchone() is None:
-        raise CaseError("That case no longer exists.")
-
-    data = dict(data or {})
-    summary = str(data.get("summary") or "").strip()
-    if not summary:
-        raise CaseError("Say in one line what happened — that is the entry.")
-
-    happened = orders.normalise_date(data.get("happened_at")) or _today()
-    follow_up = orders.normalise_date(data.get("follow_up_at"))
-    kind = str(data.get("kind") or "NOTE").upper()
-
-    stamp = db.now()
-    with conn:
-        cursor = conn.execute(
-            """INSERT INTO case_entries(case_id, kind, happened_at, who,
-                                        summary, detail, doc_id, email_id,
-                                        follow_up_at, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (case_id, kind, happened, str(data.get("who") or "").strip() or None,
-             summary, str(data.get("detail") or "").strip() or None,
-             _int(data.get("doc_id")), _int(data.get("email_id")),
-             follow_up, stamp))
-        conn.execute("UPDATE cases SET updated_at = ? WHERE id = ?",
-                     (stamp, case_id))
-        db.touch(conn)
-    return cursor.lastrowid
+    try:
+        return chase.add(LOG, case_id, data)
+    except chase.LogError as exc:
+        raise CaseError(str(exc)) from exc
 
 
 def update_entry(entry_id: int, data: dict) -> None:
-    conn = db.connect()
-    data = dict(data or {})
-    changes = {}
-    for key in ENTRY_FIELDS:
-        if key not in data:
-            continue
-        value = data[key]
-        if key in ("happened_at", "follow_up_at", "done_at"):
-            value = orders.normalise_date(value)
-        elif key in ("doc_id", "email_id"):
-            value = _int(value)
-        elif isinstance(value, str):
-            value = value.strip() or None
-        changes[key] = value
-    if not changes:
-        return
-    with conn:
-        sets = ", ".join(f"{key} = ?" for key in changes)
-        conn.execute(f"UPDATE case_entries SET {sets} WHERE id = ?",
-                     [*changes.values(), entry_id])
-        db.touch(conn)
+    chase.update(LOG, entry_id, data)
 
 
 def complete_follow_up(entry_id: int, done: bool = True) -> None:
     """Tick off (or untick) a follow-up action."""
-    conn = db.connect()
-    with conn:
-        conn.execute("UPDATE case_entries SET done_at = ? WHERE id = ?",
-                     (db.now() if done else None, entry_id))
-        db.touch(conn)
+    chase.complete(LOG, entry_id, done)
 
 
 def delete_entry(entry_id: int) -> None:
-    conn = db.connect()
-    with conn:
-        conn.execute("DELETE FROM case_entries WHERE id = ?", (entry_id,))
-        db.touch(conn)
+    chase.delete(LOG, entry_id)
 
 
 def delete_case(case_id: int) -> None:
@@ -291,19 +240,8 @@ def get_case(case_id: int) -> dict | None:
     if row is None:
         return None
     item = _decorate(dict(row))
-    item["entries"] = [
-        dict(entry) | {"late": bool(entry["follow_up_at"]
-                                    and not entry["done_at"]
-                                    and entry["follow_up_at"] < _today())}
-        for entry in conn.execute(
-            """SELECT e.*, d.filename, d.stored_name
-               FROM case_entries e
-               LEFT JOIN documents d ON d.id = e.doc_id
-               WHERE e.case_id = ?
-               ORDER BY e.happened_at DESC, e.id DESC""", (case_id,))
-    ]
-    item["open_actions"] = sum(
-        1 for e in item["entries"] if e["follow_up_at"] and not e["done_at"])
+    item["entries"] = chase.entries(LOG, case_id)
+    item["open_actions"] = chase.open_actions(item["entries"])
     return item
 
 

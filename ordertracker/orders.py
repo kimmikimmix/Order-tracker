@@ -237,6 +237,11 @@ class OrderError(Exception):
     """A problem the user needs to see and fix."""
 
 
+def company_id_for(conn, data) -> int:
+    """Public form of the lookup: id, or name, creating it when new."""
+    return _company_id_for(conn, data)
+
+
 def _company_id_for(conn, data) -> int:
     """Resolve company_id, creating the company when only a name is given."""
     if data.get("company_id"):

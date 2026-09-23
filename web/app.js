@@ -200,6 +200,9 @@ function renderNavCounts() {
     node.style.background = count ? colour : 'transparent';
   };
   badge($('#navmail'), mail.needs_review, 'var(--amber)');
+  const folders = d.folders || {};
+  badge($('#navfolders'), folders.due, folders.overdue ? 'var(--red)'
+                                                       : 'var(--amber)');
   badge($('#navcases'), (cases.overdue || 0) + (cases.late_actions || 0),
         'var(--red)');
 }
@@ -208,8 +211,8 @@ function renderNavCounts() {
 /* The address bar mirrors where you are, so a view, a filter or a single
    order can be bookmarked or pasted to a colleague on the same machine. */
 
-const NAV_VIEWS = ['dash', 'blotter', 'companies', 'inbox', 'cases',
-                   'docs', 'import', 'setup'];
+const NAV_VIEWS = ['dash', 'blotter', 'companies', 'inbox', 'folders',
+                   'cases', 'docs', 'import', 'setup'];
 
 function setHash(fragment) {
   const next = '#' + fragment;
@@ -232,6 +235,11 @@ function applyHash() {
   if (head === 'new') {
     show('blotter');
     newOrderModal(rest);          // #new/spec opens straight on the spec
+    return;
+  }
+  if (head === 'folder' && rest) {
+    show('folders');
+    openFolder(Number(rest));
     return;
   }
   if (head === 'case' && rest) {
@@ -268,6 +276,7 @@ function show(view) {
   if (view === 'blotter') loadBlotter();
   if (view === 'companies') renderCompanies();
   if (view === 'inbox') renderInbox();
+  if (view === 'folders') renderFolders();
   if (view === 'cases') renderCases();
   if (view === 'docs') renderDocs();
   if (view === 'import') renderImport();
@@ -311,6 +320,10 @@ function renderDash() {
       ${tile('MAIL TO CHECK', mail.needs_review || 0,
              `${mail.total || 0} email(s) read`,
              mail.needs_review ? 'amber' : '', 'inbox')}
+      ${tile('FOLDERS DUE', (d.folders || {}).due || 0,
+             `${(d.folders || {}).open || 0} conversation(s) running`,
+             (d.folders || {}).overdue ? 'red'
+               : ((d.folders || {}).due ? 'amber' : ''), 'folders')}
       ${tile('OPEN CASES', disputes.open || 0,
              disputes.late_actions
                ? `${disputes.late_actions} action(s) late`
@@ -394,6 +407,7 @@ function renderDash() {
       else if (act === 'docs') show('docs');
       else if (act === 'inbox') show('inbox');
       else if (act === 'cases') show('cases');
+      else if (act === 'folders') show('folders');
       return;
     }
     const row = event.target.closest('[data-open]');
@@ -599,7 +613,7 @@ function renderCompanies() {
     <table class="grid">
       <thead><tr>
         <th>CUSTOMER</th><th>CODE</th><th>WHERE</th><th>LOCAL TIME</th>
-        <th>CONTACT</th><th>EMAIL</th><th class="num">ORDERS</th><th class="num">OPEN</th><th class="num">OPEN VALUE</th><th></th>
+        <th>CONTACT</th><th>EMAIL</th><th class="num">ORDERS</th><th class="num">OPEN</th><th class="num">OPEN VALUE</th><th class="num">FOLDERS</th><th></th>
       </tr></thead>
       <tbody>
         ${companies.map(c => `
@@ -614,6 +628,10 @@ function renderCompanies() {
             <td class="num">${c.order_count}</td>
             <td class="num">${c.open_count}</td>
             <td class="num">${money(c.open_value)}</td>
+            <td class="num"><button class="btn" data-folders="${c.id}"
+              title="Enquiries and requests from this customer">${
+                c.open_folders || 0}${c.folders > (c.open_folders || 0)
+                  ? ' / ' + c.folders : ''}</button></td>
             <td><button class="btn" data-edit="${c.id}">EDIT</button></td>
           </tr>`).join('')}
       </tbody>
@@ -621,6 +639,13 @@ function renderCompanies() {
 
   $('#c-new').onclick = () => companyModal(null);
   $('#view-companies').onclick = event => {
+    const foldersBtn = event.target.closest('[data-folders]');
+    if (foldersBtn) {
+      FOLDERS.filter = { open: '1', company_id: foldersBtn.dataset.folders,
+                         status: '', q: '' };
+      show('folders');
+      return;
+    }
     const editBtn = event.target.closest('[data-edit]');
     if (editBtn) {
       const company = S.boot.companies.find(c => c.id === Number(editBtn.dataset.edit));
@@ -1583,7 +1608,8 @@ document.addEventListener('keydown', event => {
   if (event.key === '/') { event.preventDefault(); $('#cmd').focus(); return; }
 
   const views = { '1': 'dash', '2': 'blotter', '3': 'companies', '4': 'inbox',
-                  '5': 'cases', '6': 'docs', '7': 'import', '8': 'setup' };
+                  '5': 'folders', '6': 'cases', '7': 'docs', '8': 'import',
+                  '9': 'setup' };
   if (views[event.key]) { show(views[event.key]); return; }
 
   if (event.key === 'n' || event.key === 'N') { newOrderModal(); return; }

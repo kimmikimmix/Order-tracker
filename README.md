@@ -62,6 +62,14 @@ Anything it is not sure about waits in the tray with the reasons for its
 guess written next to it. Nothing is sent anywhere, and `.msg` works without
 Outlook installed.
 
+**Gives every conversation a folder.** Not everything a customer sends is an
+order, and most of it starts long before one exists: a price request, a
+sample, a question about a stack-up, a chase about a delivery. Each gets a
+folder with the topic on the front, the emails received and sent kept
+together inside it, what they want, where it stands right now, a date to
+come back to it, and the actions still outstanding. The customer list shows
+how many each customer has running.
+
 **Keeps the whole story of a dispute.** When a lot comes back faulty, open a
 case against the order: what is wrong, how many pieces, how much is claimed,
 who is handling it, and when an answer is due. Then log every call, mail,
@@ -92,7 +100,7 @@ drive, a network share — and it copies the order book there every time it
 starts, keeping the last several copies. The status bar always shows when your
 work was last saved and last backed up.
 
-**Keyboard-first.** `/` to search, `1`–`8` for views, `j`/`k` to move down the
+**Keyboard-first.** `/` to search, `1`–`9` for views, `j`/`k` to move down the
 blotter, `enter` to open, `n` for a new order, `esc` to close.
 
 ## The build specification and cost sheet
@@ -187,6 +195,41 @@ be opened again exactly as it arrived.
 Set your own addresses under SETUP → EMAIL INTAKE and mail you sent is marked
 as going out rather than coming in. The confidence needed to file without
 asking is set there too.
+
+## Folders: everything that is not an order yet
+
+The order book answers *what have we sold*. Folders answer the other half:
+*what is anybody waiting on me for*.
+
+Open one from **FOLDERS → + NEW FOLDER**, or straight from an email in the
+tray — **START A FOLDER FROM THIS EMAIL** carries the subject and the summary
+across. Each folder holds:
+
+| | |
+| --- | --- |
+| **Topic** | the headline: what this conversation is about |
+| **What they want** | the request in your own words |
+| **Where it stands** | what is happening right now, and who has the ball |
+| **Come back by** | the date it next needs attention |
+| **Kind and status** | enquiry, quote request, sample, spec question, delivery, complaint — waiting on us, waiting on them, quoted, won, lost |
+| **Worth** | what it is worth if it becomes an order |
+
+Inside are two things. The **emails**, received and sent, filed together —
+open an email in the inbox and choose the folder, and it is logged as having
+arrived or gone. And the **log**: every call, meeting, note, decision and
+action, each with its date, never overwritten. Any entry can carry a
+follow-up date, and those appear on the FOLDERS page and the dashboard,
+turning red when they pass.
+
+Folders are shown as cards rather than rows, because a topic is a headline,
+not a cell. The ones due soonest come first; the ones with no date wait at
+the bottom rather than jumping the queue. `PRINT` puts the whole folder —
+topic, position, log and the list of emails — on one sheet of white paper,
+which is what you want in front of you before a call.
+
+A folder can be pointed at an order once one exists, and settling it (won,
+lost, closed) takes it out of what is outstanding without deleting anything.
+Deleting a folder leaves its emails on file; only the folder goes.
 
 ## Disputes, defects and what you did about them
 
@@ -694,7 +737,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 243 tests, no dependencies
+python3 -m unittest discover tests     # 263 tests, no dependencies
 ```
 
 The pieces:
@@ -710,6 +753,8 @@ ordertracker/
   mail.py                   read a saved email, summarise it, file it
   outlook.py                Outlook .msg reader, written from the format up
   cases.py                  disputes and defects, and the log of each one
+  threads.py                a folder per running conversation with a customer
+  chase.py                  the dated log both of those keep
   settings.py               remembered storage folder and welcome name
   shortcut.py               desktop shortcut for Windows, macOS and Linux
   prefs.py                  the settings page's values, stored with the data
@@ -736,6 +781,7 @@ web/                        the single-page front end (no build step)
   setup.js                  the settings page
   inbox.js                  the email tray
   cases.js                  disputes and their logs
+  folders.js                the enquiry folders and what is in them
 assets/                     app icon (regenerate with tools/make_icon.py)
 tests/                      the test suite
 ```

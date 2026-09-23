@@ -724,3 +724,49 @@ a.ordlink:hover { text-decoration: underline; }
   color: var(--dim); letter-spacing: .5px;
 }
 .specgrid .fld button.today:hover { color: var(--amber); }
+
+/* ---------- enquiry folders ---------- */
+
+/* Cards rather than rows: a folder is a thing you look into, and the topic
+   has to read as a headline, not as a cell. */
+.foldergrid {
+  display: grid; gap: 10px; margin-top: 4px;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+}
+.foldercard {
+  border: 1px solid var(--line); border-left: 2px solid var(--blue);
+  background: var(--panel); padding: 10px 12px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.foldercard:hover { background: var(--panel-2); border-color: #3a3e47;
+                    border-left-color: var(--amber); }
+.foldercard.late { border-left-color: var(--red); }
+.foldercard .fhead { display: flex; align-items: center; gap: 4px;
+                     flex-wrap: wrap; }
+.foldercard .fref { color: var(--amber); font-size: 10px; letter-spacing: 1px;
+                    margin-right: 2px; }
+.foldercard .ftopic { font-size: 13px; line-height: 1.35; color: var(--text); }
+.foldercard .fwho { font-size: 10.5px; color: var(--dim); }
+.foldercard .fkv {
+  display: grid; grid-template-columns: 106px 1fr; gap: 2px 8px;
+  font-size: 10.5px; border-top: 1px solid var(--line-soft); padding-top: 6px;
+}
+.foldercard .fkv .k { color: var(--dimmer); letter-spacing: .5px; }
+.foldercard .fkv .v { color: var(--dim); overflow: hidden;
+                      display: -webkit-box; -webkit-line-clamp: 2;
+                      -webkit-box-orient: vertical; }
+.foldercard .ffoot {
+  display: flex; gap: 10px; align-items: center; font-size: 10px;
+  color: var(--dimmer); border-top: 1px solid var(--line-soft); padding-top: 6px;
+}
+
+/* The same headline at the top of the open folder. */
+.topicbox {
+  border: 1px solid var(--line); border-left: 2px solid var(--amber);
+  background: var(--panel-2); padding: 10px 12px; margin-bottom: 12px;
+}
+.topicbox .ttopic { font-size: 14px; margin-bottom: 6px; }
+.topicbox .tkv { display: grid; grid-template-columns: 120px 1fr;
+                 gap: 3px 10px; font-size: 11px; }
+.topicbox .tkv .k { color: var(--dimmer); font-size: 10px; letter-spacing: .5px; }
+.topicbox .tkv .v { color: var(--dim); }

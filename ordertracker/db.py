@@ -14,7 +14,7 @@ from . import config, drives
 
 _local = threading.local()
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def now() -> str:
@@ -408,6 +408,53 @@ CREATE TABLE IF NOT EXISTS case_entries (
 CREATE INDEX IF NOT EXISTS idx_entries_case ON case_entries(case_id, happened_at);
 CREATE INDEX IF NOT EXISTS idx_entries_due  ON case_entries(follow_up_at);
 
+-- A folder for one running conversation with a customer: an enquiry, a
+-- request, a sample, a complaint — anything that is not yet an order and
+-- has to be chased. The topic is the headline; the summary says what they
+-- want; the situation says where it stands right now. Emails received and
+-- sent are filed inside it, and its log carries the actions.
+CREATE TABLE IF NOT EXISTS threads (
+    id           INTEGER PRIMARY KEY,
+    ref          TEXT NOT NULL UNIQUE,
+    company_id   INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    order_id     INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+    topic        TEXT NOT NULL,
+    summary      TEXT,
+    situation    TEXT,
+    kind         TEXT,
+    status       TEXT NOT NULL,
+    priority     TEXT DEFAULT 'NORMAL',
+    value_usd    REAL,
+    opened_at    TEXT NOT NULL,
+    follow_up_at TEXT,
+    closed_at    TEXT,
+    owner        TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_threads_company ON threads(company_id);
+CREATE INDEX IF NOT EXISTS idx_threads_status  ON threads(status);
+CREATE INDEX IF NOT EXISTS idx_threads_follow  ON threads(follow_up_at);
+
+CREATE TABLE IF NOT EXISTS thread_entries (
+    id           INTEGER PRIMARY KEY,
+    thread_id    INTEGER NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    kind         TEXT NOT NULL,
+    happened_at  TEXT NOT NULL,
+    who          TEXT,
+    summary      TEXT NOT NULL,
+    detail       TEXT,
+    doc_id       INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+    email_id     INTEGER REFERENCES emails(id) ON DELETE SET NULL,
+    follow_up_at TEXT,
+    done_at      TEXT,
+    created_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_thread_entries ON thread_entries(thread_id, happened_at);
+CREATE INDEX IF NOT EXISTS idx_thread_due     ON thread_entries(follow_up_at);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -433,6 +480,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
 # Columns added after the first release. SQLite has no "ADD COLUMN IF NOT
 # EXISTS", so each is applied only when the table is missing it.
 LATER_COLUMNS = {
+    "emails": [
+        ("thread_id", "INTEGER"),   # the folder it was filed into, if any
+    ],
     "companies": [
         ("country", "TEXT"),      # two-letter code, e.g. KR, DE, US
         ("city", "TEXT"),

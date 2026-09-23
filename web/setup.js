@@ -203,6 +203,21 @@ async function renderSetup() {
       </section>
 
       <section class="card">
+        <h2 class="sect">Enquiry folders</h2>
+        <div class="listcols">
+          <div><div class="lbl">KINDS OF FOLDER</div>
+            ${area('thread_kinds', lines(p.thread_kinds), 7)}</div>
+          <div><div class="lbl">FOLDER STATUSES</div>
+            ${area('thread_statuses', lines(p.thread_statuses), 7)}
+            <div class="lbl" style="margin-top:8px">COME BACK AFTER
+              <i class="fhint">days</i></div>
+            ${numbox('thread_due_days', p.thread_due_days)}</div>
+        </div>
+        <div class="note">A new folder is given a date to come back to it,
+          this many days out. The log entries inside keep their own.</div>
+      </section>
+
+      <section class="card">
         <h2 class="sect">Disputes and defects</h2>
         <div class="listcols">
           <div><div class="lbl">KINDS OF CASE</div>
@@ -407,6 +422,9 @@ async function saveSetup() {
     case_severities: fromLines(value('case_severities')),
     case_entry_kinds: fromLines(value('case_entry_kinds')),
     case_due_days: number('case_due_days'),
+    thread_kinds: fromLines(value('thread_kinds')),
+    thread_statuses: fromLines(value('thread_statuses')),
+    thread_due_days: number('thread_due_days'),
     welcome: { name: value('welcome_name'), show: $('#set-welcome_show').checked },
   };
   try {

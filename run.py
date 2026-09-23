@@ -211,6 +211,7 @@ def main(argv=None):
             print(f"  {counts['orders']} orders, {counts['companies']} companies, "
                   f"{counts['documents']} documents,\n"
                   f"  {counts['emails']} emails in the tray, "
+                  f"{counts['folders']} folders, "
                   f"{counts['cases']} open disputes")
 
     if not args.no_backup:

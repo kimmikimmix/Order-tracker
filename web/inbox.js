@@ -232,6 +232,9 @@ async function openMail(mailId) {
   const allRefs = [...(refs.po || []), ...(refs.quote || []), ...(refs.codes || [])];
   const cases = (await api('/api/cases?open=1')).cases
     .filter(c => !item.order_id || c.order_id === item.order_id);
+  const folders = item.company_id
+    ? (await api('/api/threads?open=1&company_id=' + item.company_id)).folders
+    : [];
 
   modal(`EMAIL — ${esc(item.category || 'GENERAL')}`, `
     <div class="kv mailhead">
@@ -259,6 +262,22 @@ async function openMail(mailId) {
       ${(item.reasons || []).map(r => `<li>${esc(r)}</li>`).join('')
         || '<li>filed by hand</li>'}
     </ul>
+
+    <h2 class="sect">Keep it in a folder</h2>
+    ${item.company_id ? `
+    <div class="filterbar" style="padding:0">
+      <select id="mm-folder" style="min-width:300px">
+        <option value="">— choose an open folder —</option>
+        ${folders.map(f => `<option value="${f.id}"
+          ${String(item.thread_id) === String(f.id) ? 'selected' : ''}
+          >${esc(f.ref)} · ${esc(f.topic)}</option>`).join('')}
+      </select>
+      <button class="btn" id="mm-file">FILE IT IN</button>
+      <button class="btn" id="mm-newfolder">START A FOLDER FROM THIS EMAIL</button>
+    </div>
+    ${item.thread_id ? '<div class="note">Already filed in a folder.</div>' : ''}`
+    : '<div class="note">Give the email a customer first — a folder belongs '
+      + 'to one.</div>'}
 
     ${item.order_id ? `
     <h2 class="sect">Log it against a dispute</h2>
@@ -316,6 +335,32 @@ async function openMail(mailId) {
         closeModal();
         if (S.openOrder) openOrder(S.openOrder.id);
       } catch (err) { toast(err.message, 'err'); }
+    };
+  }
+  if ($('#mm-file')) {
+    $('#mm-file').onclick = async () => {
+      const folderId = $('#mm-folder').value;
+      if (!folderId) { toast('Choose a folder first', 'err'); return; }
+      try {
+        await postJSON(`/api/threads/${folderId}/emails`, { email_id: item.id });
+        toast('Filed in the folder', 'ok');
+        closeModal();
+        loadInbox(); reloadBoot();
+      } catch (err) { toast(err.message, 'err'); }
+    };
+  }
+  if ($('#mm-newfolder')) {
+    $('#mm-newfolder').onclick = () => {
+      closeModal();
+      newFolderModal({
+        company: item.company || '',
+        topic: item.subject || '',
+        summary: item.summary || '',
+        kind: item.category === 'QUOTE' ? 'QUOTE REQUEST'
+          : item.category === 'DEFECT' ? 'COMPLAINT'
+          : item.category === 'DELIVERY' ? 'DELIVERY' : '',
+        email: item,
+      });
     };
   }
   if ($('#mm-newcase')) {
