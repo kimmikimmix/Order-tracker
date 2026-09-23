@@ -211,8 +211,8 @@ function renderNavCounts() {
 /* The address bar mirrors where you are, so a view, a filter or a single
    order can be bookmarked or pasted to a colleague on the same machine. */
 
-const NAV_VIEWS = ['dash', 'blotter', 'companies', 'inbox', 'folders',
-                   'cases', 'docs', 'import', 'setup'];
+const NAV_VIEWS = ['dash', 'graph', 'blotter', 'companies', 'inbox',
+                   'folders', 'cases', 'docs', 'import', 'setup'];
 
 function setHash(fragment) {
   const next = '#' + fragment;
@@ -235,6 +235,12 @@ function applyHash() {
   if (head === 'new') {
     show('blotter');
     newOrderModal(rest);          // #new/spec opens straight on the spec
+    return;
+  }
+  if (head === 'graph') {
+    GRAPH.at = rest || '';
+    GRAPH.trail = [];
+    show('graph');
     return;
   }
   if (head === 'folder' && rest) {
@@ -276,12 +282,14 @@ function show(view) {
   if (view === 'blotter') loadBlotter();
   if (view === 'companies') renderCompanies();
   if (view === 'inbox') renderInbox();
+  if (view === 'graph') renderGraph();
   if (view === 'folders') renderFolders();
   if (view === 'cases') renderCases();
   if (view === 'docs') renderDocs();
   if (view === 'import') renderImport();
   if (view === 'setup') renderSetup();
   if (view !== 'dash') MapView.stop();
+  if (view !== 'graph') stopGraph();
 }
 
 /* ---- dashboard ---- */
@@ -1697,9 +1705,9 @@ document.addEventListener('keydown', event => {
 
   if (event.key === '/') { event.preventDefault(); $('#cmd').focus(); return; }
 
-  const views = { '1': 'dash', '2': 'blotter', '3': 'companies', '4': 'inbox',
-                  '5': 'folders', '6': 'cases', '7': 'docs', '8': 'import',
-                  '9': 'setup' };
+  const views = { '1': 'dash', '2': 'graph', '3': 'blotter', '4': 'companies',
+                  '5': 'inbox', '6': 'folders', '7': 'cases', '8': 'docs',
+                  '9': 'import', '0': 'setup' };
   if (views[event.key]) { show(views[event.key]); return; }
 
   if (event.key === 'n' || event.key === 'N') { newOrderModal(); return; }

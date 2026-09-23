@@ -16,6 +16,17 @@ subscription, and nothing leaves the computer.
 filterable blotter — order number, customer, their PO number, stage, promised
 date, days until due, value, owner, document count.
 
+**Draws the whole book as a network.** The NETWORK page puts your customers
+around a hub, coloured by whether anything is wrong with them. Click one and
+it takes the centre, with its orders fanned on one side and its folders and
+disputes on the other. Click an order and the centre becomes the order, with
+the stages it has been through on one side — done, now, next — and everything
+filed on it on the other: documents, email, disputes, folders. The panel
+beside it always shows what the middle is, with the buttons to go straight to
+the order, its specification, its cost sheet, its documents or its printed
+sheet. Only the layer you are looking at is drawn, so a thousand orders never
+become a thousand dots.
+
 **Shows you where your customers are, and what time it is there.** The
 dashboard opens on a world map with every customer on it, sized by how much
 work is open and turning red when something is flagged. The day/night line
@@ -115,7 +126,7 @@ drive, a network share — and it copies the order book there every time it
 starts, keeping the last several copies. The status bar always shows when your
 work was last saved and last backed up.
 
-**Keyboard-first.** `/` to search, `1`–`9` for views, `j`/`k` to move down the
+**Keyboard-first.** `/` to search, `1`–`0` for views, `j`/`k` to move down the
 blotter, `enter` to open, `n` for a new order, `esc` to close.
 
 ## The build specification and cost sheet
@@ -768,7 +779,7 @@ Worth knowing before you rely on it:
 ## Developing
 
 ```bash
-python3 -m unittest discover tests     # 295 tests, no dependencies
+python3 -m unittest discover tests     # 306 tests, no dependencies
 ```
 
 The pieces:
@@ -789,6 +800,7 @@ ordertracker/
   threads.py                a folder per running conversation with a customer
   chase.py                  the dated log both of those keep
   briefing.py               what needs doing today, from everywhere at once
+  graph.py                  the network view: one hub and its neighbours
   settings.py               remembered storage folder and welcome name
   shortcut.py               desktop shortcut for Windows, macOS and Linux
   prefs.py                  the settings page's values, stored with the data
@@ -816,6 +828,7 @@ web/                        the single-page front end (no build step)
   inbox.js                  the email tray
   cases.js                  disputes and their logs
   folders.js                the enquiry folders and what is in them
+  graph.js                  the network diagram, drawn as plain SVG
 assets/                     app icon (regenerate with tools/make_icon.py)
 tests/                      the test suite
 ```

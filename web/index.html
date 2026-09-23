@@ -42,14 +42,15 @@
 
 <nav id="nav">
   <button data-view="dash"      class="active"><b>1</b> DASH</button>
-  <button data-view="blotter"><b>2</b> BLOTTER</button>
-  <button data-view="companies"><b>3</b> CUSTOMERS</button>
-  <button data-view="inbox"><b>4</b> INBOX<span id="navmail" class="navcount"></span></button>
-  <button data-view="folders"><b>5</b> FOLDERS<span id="navfolders" class="navcount"></span></button>
-  <button data-view="cases"><b>6</b> CASES<span id="navcases" class="navcount"></span></button>
-  <button data-view="docs"><b>7</b> DOCS</button>
-  <button data-view="import"><b>8</b> IMPORT</button>
-  <button data-view="setup"><b>9</b> SETUP</button>
+  <button data-view="graph"><b>2</b> NETWORK</button>
+  <button data-view="blotter"><b>3</b> BLOTTER</button>
+  <button data-view="companies"><b>4</b> CUSTOMERS</button>
+  <button data-view="inbox"><b>5</b> INBOX<span id="navmail" class="navcount"></span></button>
+  <button data-view="folders"><b>6</b> FOLDERS<span id="navfolders" class="navcount"></span></button>
+  <button data-view="cases"><b>7</b> CASES<span id="navcases" class="navcount"></span></button>
+  <button data-view="docs"><b>8</b> DOCS</button>
+  <button data-view="import"><b>9</b> IMPORT</button>
+  <button data-view="setup"><b>0</b> SETUP</button>
   <div class="navspacer"></div>
   <button id="btn-new" class="accent"><b>N</b> NEW ORDER</button>
   <a id="btn-export" href="/api/export/orders.csv" class="navlink">EXPORT CSV</a>
@@ -58,6 +59,7 @@
 
 <main id="main">
   <section id="view-dash"      class="view"></section>
+  <section id="view-graph"     class="view hidden"></section>
   <section id="view-blotter"   class="view hidden"></section>
   <section id="view-companies" class="view hidden"></section>
   <section id="view-inbox"     class="view hidden"></section>
@@ -89,7 +91,7 @@
   <span id="saved" class="saved"></span>
   <span class="spacer"></span>
   <span class="keys">
-    <kbd>/</kbd> search <kbd>1-9</kbd> views <kbd>j</kbd>/<kbd>k</kbd> move
+    <kbd>/</kbd> search <kbd>1-0</kbd> views <kbd>j</kbd>/<kbd>k</kbd> move
     <kbd>enter</kbd> open <kbd>esc</kbd> close <kbd>n</kbd> new
   </span>
 </footer>
@@ -100,6 +102,7 @@
 <script src="/setup.js"></script>
 <script src="/inbox.js"></script>
 <script src="/cases.js"></script>
+<script src="/graph.js"></script>
 <script src="/folders.js"></script>
 <script src="/app.js"></script>
 </body>

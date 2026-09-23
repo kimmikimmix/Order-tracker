@@ -809,3 +809,57 @@ a.ordlink:hover { text-decoration: underline; }
                 white-space: nowrap; }
 .todayrow .tt .subtle { display: block; }
 .todayrow.more .tt { color: var(--blue); }
+
+/* ---------- the network view ---------- */
+
+.graphbar .crumbs { display: flex; align-items: center; gap: 6px;
+                    font-size: 11px; }
+.graphbar .crumb { color: var(--blue); cursor: pointer; }
+.graphbar .crumb:hover { text-decoration: underline; }
+.graphbar .crumb.here { color: var(--amber); cursor: default;
+                        text-decoration: none; }
+.graphbar .sep { color: var(--dimmer); }
+
+.graphwrap {
+  display: grid; grid-template-columns: 1fr 300px; gap: 10px;
+  height: calc(100vh - 175px); min-height: 460px;
+}
+.graphcanvas {
+  border: 1px solid var(--line); background:
+    radial-gradient(circle at 50% 50%, #12161d 0%, var(--bg) 70%);
+  overflow: hidden; position: relative;
+}
+.graphsvg { display: block; }
+
+.gedge { fill: none; stroke-width: 1; opacity: .32; }
+.gnode { cursor: pointer; }
+.gnode:hover .gdot { r: 11; }
+.gnode:hover .glabel { fill: var(--amber); }
+.gdot { transition: r .12s; }
+.glabel { fill: var(--text); font-family: var(--mono); font-size: 11px; }
+.gsub { fill: var(--dimmer); font-family: var(--mono); font-size: 9.5px; }
+.gheading { fill: var(--dim); font-family: var(--mono); font-size: 10px;
+            letter-spacing: 1.5px; }
+.ghalo { opacity: .12; }
+.ghubdot { opacity: .9; }
+.ghublabel { fill: var(--text); font-family: var(--mono); font-size: 12px;
+             letter-spacing: .5px; }
+
+.graphside {
+  border: 1px solid var(--line); background: var(--panel); padding: 10px;
+  overflow: auto;
+}
+.graphside .ghead { border-bottom: 1px solid var(--line); padding-bottom: 6px;
+                    margin-bottom: 8px; }
+.graphside .gtitle { font-size: 13px; line-height: 1.3; }
+.graphside .gkind { font-size: 10px; letter-spacing: 1px; color: var(--dim); }
+.graphside .gsubline { font-size: 11px; color: var(--dim); margin-bottom: 8px; }
+.graphside .gflags { margin-bottom: 8px; }
+.graphside table.grid { margin-bottom: 10px; }
+.graphside .glinks { display: flex; flex-wrap: wrap; gap: 5px;
+                     margin-bottom: 10px; }
+.graphside .glinks .btn { flex: 1 1 auto; }
+.pipeline.graphpipe { margin-bottom: 10px; flex-wrap: wrap; }
+.pipeline.graphpipe .step { font-size: 9px; padding: 2px 4px; }
+.graphside table.grid td { word-break: break-word; }
+.graphside table.grid td.ck { width: 96px; white-space: nowrap; }

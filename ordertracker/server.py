@@ -16,8 +16,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (backup, briefing, cases, config, db, documents, geo,
-               importer, mail, multipart, orders, pcb, prefs, printsheet,
-               relocate, settings, threads)
+               graph, importer, mail, multipart, orders, pcb, prefs,
+               printsheet, relocate, settings, threads)
 
 MAX_BODY_BYTES = config.MAX_UPLOAD_BYTES + (8 * 1024 * 1024)
 
@@ -99,6 +99,12 @@ def _dashboard() -> dict:
     board["folders"] = threads.summary()
     board["today"] = briefing.today()
     return board
+
+
+@route("GET", r"/api/graph")
+def api_graph(handler, match):
+    """One hub and its neighbours, at whichever depth was asked for."""
+    return graph.view(handler.query.get("at", ""))
 
 
 @route("GET", r"/api/today")

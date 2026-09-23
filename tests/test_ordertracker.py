@@ -3708,3 +3708,119 @@ class TestWhatNeedsDoingToday(unittest.TestCase):
             briefing._when((today - datetime.timedelta(days=4)).isoformat()),
             "4 days late")
         self.assertEqual(briefing._when(None), "")
+
+
+class TestTheNetworkView(unittest.TestCase):
+    """One hub and its neighbours, at three depths."""
+
+    def setUp(self):
+        fresh_db()
+        from ordertracker import graph
+        self.graph = graph
+        self.company = orders.save_company({
+            "name": "Sakura Denshi KK", "city": "Osaka", "country": "JP"})
+        self.late = orders.create_order({
+            "company": "Sakura Denshi KK", "order_no": "OT-1",
+            "product_code": "PN-1", "status": "IN PRODUCTION",
+            "value": 1000,
+            "promise_date": (datetime.date.today()
+                             - datetime.timedelta(days=5)).isoformat()})
+        self.calm = orders.create_order({
+            "company": "Sakura Denshi KK", "order_no": "OT-2",
+            "status": "CONFIRMED", "value": 500,
+            "promise_date": (datetime.date.today()
+                             + datetime.timedelta(days=60)).isoformat()})
+
+    def nodes(self, view, title=None):
+        return [node for group in view["groups"]
+                if title is None or group["title"] == title
+                for node in group["nodes"]]
+
+    # --- everything -------------------------------------------------------
+
+    def test_the_overview_is_one_node_per_customer(self):
+        view = self.graph.view("")
+        self.assertEqual(view["hub"]["kind"], "ROOT")
+        self.assertEqual([n["label"] for n in self.nodes(view)],
+                         ["Sakura Denshi KK"])
+        self.assertEqual(view["at"], "")
+
+    def test_a_customer_with_something_late_is_marked_late(self):
+        node = self.nodes(self.graph.view(""))[0]
+        self.assertEqual(node["tone"], self.graph.TONE_LATE)
+        self.assertIn("2 open", node["badges"])
+        self.assertEqual(node["drill"], f"company/{self.company}")
+
+    def test_a_customer_with_nothing_running_is_quiet(self):
+        orders.update_order(self.late, {"status": "PAID"})
+        orders.update_order(self.calm, {"status": "PAID"})
+        node = self.nodes(self.graph.view(""))[0]
+        self.assertEqual(node["tone"], self.graph.TONE_IDLE)
+
+    # --- one customer -----------------------------------------------------
+
+    def test_a_customer_fans_out_their_orders(self):
+        view = self.graph.view(f"company/{self.company}")
+        self.assertEqual(view["hub"]["label"], "Sakura Denshi KK")
+        listed = self.nodes(view, "ORDERS")
+        self.assertEqual(sorted(n["label"] for n in listed), ["OT-1", "OT-2"])
+        late = [n for n in listed if n["label"] == "OT-1"][0]
+        self.assertEqual(late["tone"], self.graph.TONE_LATE)
+        self.assertIn("OVERDUE", late["badges"])
+        self.assertEqual(late["drill"], f"order/{self.late}")
+
+    def test_folders_and_disputes_hang_off_the_customer_too(self):
+        folder = threads.open_folder({"company": "Sakura Denshi KK",
+                                      "topic": "RFQ for a new board"})
+        case = cases.open_case({"order_id": self.late, "title": "12 boards open"})
+        listed = self.nodes(self.graph.view(f"company/{self.company}"),
+                            "FOLDERS & DISPUTES")
+        self.assertIn(f"folder/{folder}", [n["id"] for n in listed])
+        self.assertIn(f"case/{case}", [n["id"] for n in listed])
+
+    def test_the_customer_panel_adds_up_what_is_open(self):
+        rows = dict(self.graph.view(f"company/{self.company}")["detail"]["rows"])
+        self.assertEqual(rows["ORDERS"], "2 on file, 2 open")
+        self.assertEqual(rows["OPEN VALUE"], 1500)
+        self.assertEqual(rows["WHERE"], "Osaka, JP")
+
+    def test_a_customer_who_is_not_there_falls_back_to_everything(self):
+        view = self.graph.view("company/9999")
+        self.assertEqual(view["hub"]["kind"], "ROOT")
+        self.assertEqual(view["at"], "")
+
+    # --- one order --------------------------------------------------------
+
+    def test_an_order_shows_the_process_it_is_in(self):
+        view = self.graph.view(f"order/{self.late}")
+        stages = self.nodes(view, "THE PROCESS")
+        now = [s for s in stages if s["sub"] == "now"]
+        self.assertEqual([s["label"] for s in now], ["IN PRODUCTION"])
+        self.assertTrue(all(s["sub"] == "done"
+                            for s in stages[:stages.index(now[0])]))
+        self.assertEqual(stages[-1]["sub"], "next",
+                         "one step ahead is shown, not the whole future")
+
+    def test_what_is_filed_on_the_order_hangs_off_it(self):
+        documents.store("po.pdf", b"%PDF-1.4 po", order_id=self.late)
+        case = cases.open_case({"order_id": self.late, "title": "a dispute"})
+        attached = self.nodes(self.graph.view(f"order/{self.late}"),
+                              "ON THIS ORDER")
+        kinds = {node["kind"] for node in attached}
+        self.assertIn("DOC", kinds)
+        self.assertIn("CASE", kinds)
+        self.assertIn(f"case/{case}", [n["id"] for n in attached])
+
+    def test_the_order_panel_carries_the_pipeline_and_the_links(self):
+        detail = self.graph.view(f"order/{self.late}")["detail"]
+        self.assertEqual(detail["pipeline"]["here"], "IN PRODUCTION")
+        self.assertIn("OVERDUE", detail["alerts"])
+        self.assertEqual(dict(detail["rows"])["PRODUCT"], "PN-1")
+        links = dict(detail["links"])
+        self.assertEqual(links["OPEN THE ORDER"], f"order/{self.late}")
+        self.assertEqual(links["PRINT SHEET"], f"print/order/{self.late}")
+
+    def test_nonsense_asks_for_the_overview_rather_than_failing(self):
+        for asked in ("", "order/abc", "nothing", "company/", "../etc"):
+            view = self.graph.view(asked)
+            self.assertEqual(view["hub"]["kind"], "ROOT")
