@@ -65,6 +65,26 @@ def _rows(pairs) -> str:
     return "".join(cells) or '<tr><td colspan="2" class="none">not specified</td></tr>'
 
 
+def _pictures(entry) -> str:
+    """The photographs on a log line, printed with it.
+
+    A dispute is argued with pictures, so they belong on the sheet that
+    goes into the meeting. They are fetched from the running app, which
+    is what is printing the page.
+    """
+    shots = entry.get("attachments") or []
+    if not shots:
+        return ""
+    images = "".join(
+        f'<img class="shot" src="/api/documents/{shot["doc_id"]}/file"'
+        f' alt="{html.escape(shot["filename"])}">'
+        for shot in shots if shot.get("is_image"))
+    others = ", ".join(html.escape(shot["filename"]) for shot in shots
+                       if not shot.get("is_image"))
+    return ((f'<div class="shots">{images}</div>' if images else "")
+            + (f'<div class="detail">file: {others}</div>' if others else ""))
+
+
 def _spec_blocks(order, spec) -> str:
     values = spec["values"]
     derived = spec["derived"]
@@ -241,6 +261,9 @@ table.kv td { padding: 5px 0; border-bottom: 1px solid #e3e3e3;
               vertical-align: top; }
 table.kv th .en { display: block; font-size: 7pt; font-weight: 600;
                   letter-spacing: .6px; color: #999; }
+.shots { margin-top: 4px; display: flex; gap: 5px; flex-wrap: wrap; }
+img.shot { height: 90px; width: auto; max-width: 150px; object-fit: cover;
+           border: 1px solid #ccc; }
 table.cost th { font-size: 9pt; letter-spacing: .6px; color: #444;
                 text-align: left; border-bottom: 1.5px solid #111; padding: 6px 4px; }
 table.cost td { padding: 7px 4px; border-bottom: 1px solid #e3e3e3; }
@@ -377,7 +400,8 @@ def case_sheet(case_id: int) -> str:
                   + '</div>') if entry.get('detail') else ''}
                 {('<div class="detail">file: '
                   + html.escape(entry['filename']) + '</div>')
-                 if entry.get('filename') else ''}</td>
+                 if entry.get('filename') else ''}
+                {_pictures(entry)}</td>
               <td class="nowrap">{
                   (('DONE ' + str(entry['done_at'])[:10]) if entry.get('done_at')
                    else _text(entry.get('follow_up_at')))}</td>
@@ -476,7 +500,8 @@ def folder_sheet(folder_id: int) -> str:
               <td>{_text(entry.get('summary'))}
                 {('<div class="detail">'
                   + html.escape(entry['detail']).replace(chr(10), '<br>')
-                  + '</div>') if entry.get('detail') else ''}</td>
+                  + '</div>') if entry.get('detail') else ''}
+                {_pictures(entry)}</td>
               <td class="nowrap">{
                   (('DONE ' + str(entry['done_at'])[:10]) if entry.get('done_at')
                    else _text(entry.get('follow_up_at')))}</td>

@@ -668,6 +668,37 @@ class TestHttpApi(unittest.TestCase):
         code, body = self.get("/api/search?q=QX-55219")
         self.assertEqual(len(json.loads(body)["documents"]), 1)
 
+    def test_a_photo_goes_onto_a_note_over_http(self):
+        code, created = self.post("/api/orders", {
+            "order_no": "SO-HTTP-3", "company": "Acme Components Ltd"})
+        order_id = created["id"]
+        code, note = self.post(f"/api/orders/{order_id}/history",
+                               {"note": "chipping along the edge"})
+        self.assertEqual(code, 200)
+
+        boundary = "----T2"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="files"; filename="edge.png"\r\n'
+            "Content-Type: image/png\r\n\r\n"
+        ).encode() + b"\x89PNG\r\n\x1a\n some pixels" \
+            + f"\r\n--{boundary}--\r\n".encode()
+
+        request = urllib.request.Request(
+            self.base + f"/api/attachments/status_history/{note['id']}",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+        with urllib.request.urlopen(request) as response:
+            result = json.loads(response.read())
+        self.assertEqual(len(result["saved"]), 1)
+        self.assertTrue(result["saved"][0]["is_image"])
+
+        code, raw = self.get(f"/api/orders/{order_id}")
+        order = json.loads(raw)
+        line = [h for h in order["history"] if h["by_hand"]][0]
+        self.assertEqual([a["filename"] for a in line["attachments"]],
+                         ["edge.png"])
+
     def test_a_write_from_another_site_is_refused(self):
         """A page on some other site must not be able to change anything."""
         request = urllib.request.Request(
@@ -4013,6 +4044,142 @@ class TestCorrectingALogEntry(unittest.TestCase):
             body = (ROOT / "web" / name).read_text(encoding="utf-8")
             self.assertIn("data-edit-entry", body, name)
             self.assertIn("SAVE THE CHANGE", body, name)
+
+
+class TestPicturesOnALine(unittest.TestCase):
+    """A defect is argued with photographs, so a note can carry them."""
+
+    def setUp(self):
+        fresh_db()
+        from ordertracker import attach
+        self.attach = attach
+        self.order = orders.create_order({
+            "company": "Sakura Denshi KK", "order_no": "OT-1",
+            "status": "IN PRODUCTION"})
+        self.case = cases.open_case({"order_id": self.order,
+                                     "title": "12 boards, open circuits"})
+        self.folder = threads.open_folder({"company": "Sakura Denshi KK",
+                                           "topic": "RFQ for a new board"})
+        self.entry = cases.add_entry(self.case, {"summary": "AOI images in"})
+        self.folder_entry = threads.add_entry(self.folder,
+                                              {"summary": "drawing received"})
+        self.note = orders.add_note(self.order, {"note": "chipped edge"})
+
+    def png(self, name="defect.png", body=b"\x89PNG\r\n\x1a\n one"):
+        return name, body
+
+    # --- putting one on ---------------------------------------------------
+
+    def test_a_photo_hangs_on_a_dispute_line_and_is_filed_with_the_order(self):
+        saved = self.attach.add("case_entries", self.entry, *self.png())
+        self.assertEqual(saved["filename"], "defect.png")
+        self.assertTrue(saved["is_image"])
+        self.assertEqual(saved["kind"], "PHOTO")
+        doc = documents.get(saved["doc_id"])
+        self.assertEqual(doc["order_id"], self.order,
+                         "it belongs to the order the dispute is about")
+
+    def test_one_hangs_on_a_folder_line_and_keeps_the_customer(self):
+        saved = self.attach.add("thread_entries", self.folder_entry,
+                                *self.png("drawing.png"))
+        doc = documents.get(saved["doc_id"])
+        self.assertIsNone(doc["order_id"], "that folder has no order")
+        self.assertIsNotNone(doc["company_id"])
+
+    def test_one_hangs_on_a_note_in_the_history(self):
+        saved = self.attach.add("status_history", self.note, *self.png())
+        self.assertEqual(
+            [a["doc_id"] for a in
+             orders.get_order(self.order)["history"][0]["attachments"]],
+            [saved["doc_id"]])
+
+    def test_a_log_reads_back_with_its_pictures(self):
+        self.attach.add("case_entries", self.entry, *self.png())
+        self.attach.add("case_entries", self.entry, *self.png("second.png",
+                                                              b"other bytes"))
+        logged = [e for e in cases.get_case(self.case)["entries"]
+                  if e["id"] == self.entry][0]
+        self.assertEqual([a["filename"] for a in logged["attachments"]],
+                         ["defect.png", "second.png"])
+
+    def test_the_same_picture_twice_on_one_line_is_still_one(self):
+        first = self.attach.add("case_entries", self.entry, *self.png())
+        again = self.attach.add("case_entries", self.entry, *self.png())
+        self.assertEqual(first["id"], again["id"])
+        self.assertEqual(
+            len(self.attach.for_lines("case_entries", [self.entry])[self.entry]),
+            1)
+
+    def test_a_line_that_is_not_there_is_refused(self):
+        with self.assertRaises(self.attach.AttachError):
+            self.attach.add("case_entries", 9999, *self.png())
+
+    def test_only_the_three_logs_can_hold_one(self):
+        for owner in ("orders", "documents", "companies; DROP TABLE orders"):
+            with self.assertRaises(self.attach.AttachError):
+                self.attach.add(owner, 1, *self.png())
+        self.assertEqual(self.attach.for_lines("orders", [1]), {})
+
+    # --- taking one off ---------------------------------------------------
+
+    def test_taking_it_off_a_line_takes_the_photo_away(self):
+        saved = self.attach.add("case_entries", self.entry, *self.png())
+        self.attach.remove(saved["id"])
+        self.assertEqual(
+            self.attach.for_lines("case_entries", [self.entry]), {})
+        self.assertIsNone(documents.get(saved["doc_id"]),
+                          "a photo nobody holds goes with the line")
+
+    def test_a_photo_two_lines_hold_survives_losing_one(self):
+        first = self.attach.add("case_entries", self.entry, *self.png())
+        self.attach.add("status_history", self.note, *self.png())
+        self.attach.remove(first["id"])
+        self.assertIsNotNone(documents.get(first["doc_id"]))
+
+    def test_paperwork_attached_for_reference_is_left_on_file(self):
+        saved = self.attach.add("case_entries", self.entry,
+                                "PO-2026-1188 purchase order.pdf", b"%PDF-1.4")
+        self.assertEqual(documents.get(saved["doc_id"])["kind"], "PO")
+        self.attach.remove(saved["id"])
+        self.assertIsNotNone(documents.get(saved["doc_id"]),
+                             "a PO is paperwork, not just this line's picture")
+
+    def test_deleting_the_line_takes_its_pictures(self):
+        saved = self.attach.add("case_entries", self.entry, *self.png())
+        cases.delete_entry(self.entry)
+        self.assertIsNone(documents.get(saved["doc_id"]))
+
+    def test_deleting_a_note_takes_its_pictures(self):
+        saved = self.attach.add("status_history", self.note, *self.png())
+        orders.delete_note(self.note)
+        self.assertIsNone(documents.get(saved["doc_id"]))
+
+    def test_a_case_that_goes_leaves_no_links_behind(self):
+        self.attach.add("case_entries", self.entry, *self.png())
+        cases.delete_case(self.case)
+        conn = db.connect()
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0], 1,
+            "the entry went with the case, the link is still there")
+        db.init_db()                       # what startup does
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0], 0)
+
+    # --- and out of the way -----------------------------------------------
+
+    def test_a_photo_on_a_line_is_not_unfiled_paperwork(self):
+        self.attach.add("thread_entries", self.folder_entry,
+                        *self.png("drawing.png"))
+        self.assertEqual(
+            [d["filename"] for d in documents.list_documents(unfiled=True)], [],
+            "it is evidence on a line, not paperwork waiting to be filed")
+        self.assertEqual(briefing.unfiled_documents(), [])
+
+    def test_the_screens_offer_it(self):
+        for name in ("app.js", "cases.js", "folders.js"):
+            body = (ROOT / "web" / name).read_text(encoding="utf-8")
+            self.assertIn("attachBoxHTML", body, name)
+            self.assertIn("picturesHTML", body, name)
 
 
 class TestWhatNeedsDoingToday(unittest.TestCase):

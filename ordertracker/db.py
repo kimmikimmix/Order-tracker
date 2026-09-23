@@ -14,7 +14,7 @@ from . import config, drives
 
 _local = threading.local()
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def now() -> str:
@@ -255,6 +255,23 @@ CREATE TABLE IF NOT EXISTS documents (
     extract_note TEXT,
     uploaded_at  TEXT NOT NULL
 );
+
+-- A photo or a file hung on one line of a log: a dispute entry, a folder
+-- entry, or a note in an order's history. The line it belongs to is named
+-- by table and id rather than by a foreign key, because the three logs are
+-- three tables; attach.py holds the only list of which ones are allowed.
+CREATE TABLE IF NOT EXISTS attachments (
+    id       INTEGER PRIMARY KEY,
+    owner    TEXT NOT NULL,
+    owner_id INTEGER NOT NULL,
+    doc_id   INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    added_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_attach_owner
+    ON attachments(owner, owner_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_attach_once
+    ON attachments(owner, owner_id, doc_id);
 
 CREATE INDEX IF NOT EXISTS idx_docs_order   ON documents(order_id);
 CREATE INDEX IF NOT EXISTS idx_docs_company ON documents(company_id);
@@ -551,6 +568,10 @@ def init_db() -> None:
             (str(SCHEMA_VERSION),),
         )
         repair_dates(conn)
+        # Imported here rather than at the top: attach.py reads this
+        # module, and this is the only place that needs it.
+        from . import attach
+        attach.sweep(conn)
     if rebuild:
         rebuild_search_index()
 

@@ -15,7 +15,7 @@ import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import (backup, briefing, cases, config, db, documents, geo,
+from . import (attach, backup, briefing, cases, config, db, documents, geo,
                graph, importer, mail, multipart, orders, pcb, prefs,
                printsheet, relocate, settings, threads)
 
@@ -290,6 +290,34 @@ def api_document_upload(handler, match):
             failed.append({"filename": part.filename, "error": str(exc)})
 
     return {"ok": True, "saved": saved, "failed": failed}
+
+
+@route("POST", r"/api/attachments/([a-z_]+)/(\d+)")
+def api_attach(handler, match):
+    """Hang photos or files on one line of a log."""
+    owner, owner_id = match.group(1), int(match.group(2))
+    fields = handler.multipart_body()
+    files = fields.get("files") or fields.get("file") or []
+    if not files:
+        raise ApiError("No file was included in the upload.")
+
+    saved, failed = [], []
+    for part in files:
+        if not part.filename:
+            continue
+        try:
+            saved.append(attach.add(owner, owner_id, part.filename, part.data))
+        except attach.AttachError as exc:
+            raise ApiError(str(exc)) from exc
+        except Exception as exc:                  # unreadable, out of room
+            failed.append({"filename": part.filename, "error": str(exc)})
+    return {"ok": True, "saved": saved, "failed": failed}
+
+
+@route("DELETE", r"/api/attachments/(\d+)")
+def api_attach_remove(handler, match):
+    attach.remove(int(match.group(1)))
+    return {"ok": True}
 
 
 @route("GET", r"/api/documents/(\d+)/file")

@@ -196,6 +196,10 @@ on the timeline — and put your name beside it. Your own notes carry a **NOTE**
 chip and an **EDIT** and **DEL** button, so a typo is corrected rather than
 left standing. The app's lines carry neither.
 
+A note takes photographs too, the same way as the folder and dispute logs:
+`+ PHOTO / FILE`, or drop them on the panel, or paste a screenshot with
+`Ctrl+V`.
+
 ## The inbox: filing email without a mail server
 
 This machine cannot reach your mailbox, and the app never tries. You bring
@@ -288,9 +292,9 @@ the reason is recorded ("filed into F-2026-001 by hand"), and it leaves the
 tray. A mail that already has a customer keeps it; the folder is a second
 home for that one, not a reassignment. An email can also simply be given a
 customer with no order at all, on the same screen. And the **log**: every call, meeting, note, decision and
-action, each with its date, never overwritten. Any entry can carry a
-follow-up date, and those appear on the FOLDERS page and the dashboard,
-turning red when they pass.
+action, each with its date. Any entry can carry a follow-up date, and those
+appear on the FOLDERS page and the dashboard, turning red when they pass —
+and any entry can carry photographs.
 
 Folders are shown as cards rather than rows, because a topic is a headline,
 not a cell. The ones due soonest come first; the ones with no date wait at
@@ -322,6 +326,18 @@ dashboard, with the late ones in red, until they are ticked off.
 same box, all six fields — so a typo or a wrong date is corrected in place and
 the entry keeps the day it happened. **DEL** removes one outright. The folder
 log works the same way.
+
+**Pictures go on the line they belong to.** Under the box is `+ PHOTO / FILE`:
+pick the files, drag them anywhere onto the folder or the case, or paste a
+screenshot straight in with `Ctrl+V`. They appear as thumbnails on the entry,
+click one to see it full size, and the `×` in its corner takes it off again. A
+photo is stored as an ordinary document, filed against the same order and
+customer as the line it hangs on, so it is never counted as paperwork you
+forgot to file. Delete the line and its photographs go with it.
+
+`PRINT REPORT` prints the pictures inside the log, beside the words that
+explain them — which is the difference between describing a defect and
+showing it.
 
 An email in the tray can be logged straight into a case, or can open a new
 one with its subject and summary already filled in.

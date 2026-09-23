@@ -13,7 +13,7 @@ to remember to tidy up. It is the code that is shared, not the table.
 
 import datetime
 
-from . import db, orders
+from . import attach, db, orders
 
 # The logs this module will touch, and what each calls its owner. Table
 # names reach SQL directly, so they come from here and nowhere else.
@@ -121,6 +121,7 @@ def complete(table: str, entry_id: int, done: bool = True) -> None:
 
 def delete(table: str, entry_id: int) -> None:
     _log(table)
+    attach.remove_all(table, entry_id)      # the pictures go with the line
     conn = db.connect()
     with conn:
         conn.execute(f"DELETE FROM {table} WHERE id = ?", (entry_id,))
@@ -131,7 +132,7 @@ def entries(table: str, parent_id: int) -> list[dict]:
     """The whole log, newest first, with each action's state worked out."""
     owner_column, _ = _log(table)
     now = today()
-    return [
+    rows = [
         dict(row) | {"late": bool(row["follow_up_at"] and not row["done_at"]
                                   and row["follow_up_at"] < now)}
         for row in db.connect().execute(
@@ -141,6 +142,10 @@ def entries(table: str, parent_id: int) -> list[dict]:
                 WHERE e.{owner_column} = ?
                 ORDER BY e.happened_at DESC, e.id DESC""", (parent_id,))
     ]
+    pictures = attach.for_lines(table, [row["id"] for row in rows])
+    for row in rows:
+        row["attachments"] = pictures.get(row["id"], [])
+    return rows
 
 
 def open_actions(entries_list) -> int:

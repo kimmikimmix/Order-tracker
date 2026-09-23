@@ -299,6 +299,42 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
                        vertical-align: baseline; }
 .timeline .locked { color: var(--line); margin-left: 6px; }
 
+/* ---------- pictures on a note ---------- */
+
+.attachbox {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 8px; margin: 2px 0 8px;
+  border: 1px dashed var(--line); border-radius: 3px;
+}
+.attachbox.over { border-color: var(--amber); background: #1b1a14; }
+.attachbox .pending { display: flex; gap: 4px; flex-wrap: wrap; }
+.attachbox .note { margin: 0; }
+.unpend, .shotx {
+  border: none; background: none; color: var(--dimmer); cursor: pointer;
+  font-size: 11px; line-height: 1; padding: 0 0 0 3px;
+}
+.unpend:hover, .shotx:hover { color: var(--red); }
+
+.shots { display: flex; gap: 6px; flex-wrap: wrap; margin: 5px 0 2px; }
+.shot { position: relative; display: inline-flex; line-height: 0; }
+.shot img {
+  height: 72px; width: auto; max-width: 132px; object-fit: cover;
+  border: 1px solid var(--line); border-radius: 2px; cursor: pointer;
+  background: var(--panel-2);
+}
+.shot img:hover { border-color: var(--amber); }
+.shot.asfile { line-height: 1.4; }
+.shot .filename {
+  display: inline-block; max-width: 160px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
+  font-size: 10px; color: var(--blue); padding: 3px 5px;
+  border: 1px solid var(--line); border-radius: 2px;
+}
+.shot .shotx {
+  position: absolute; top: 1px; right: 1px; background: rgba(0,0,0,.65);
+  border-radius: 2px; padding: 0 3px;
+}
+
 /* One line of boxes: a date, a name, the note itself, and the button. */
 .noterow { display: flex; gap: 6px; align-items: center; margin: 2px 0; }
 .noterow input { min-width: 0; }

@@ -330,6 +330,7 @@ async function openCase(caseId) {
         <div class="wide"><textarea id="ce-detail" rows="2"
           placeholder="what was said, agreed, or promised"></textarea></div>
       </div>
+      ${attachBoxHTML('centry')}
       <div class="filterbar" style="padding:4px 0 12px">
         <button class="btn primary" id="ce-add">ADD TO THE LOG</button>
         <button class="btn hidden" id="ce-cancel">CANCEL</button>
@@ -348,6 +349,7 @@ async function openCase(caseId) {
               ${entry.filename ? `<div class="subtle">file:
                 <a href="/api/documents/${entry.doc_id}/file" target="_blank"
                    style="color:var(--blue)">${esc(entry.filename)}</a></div>` : ''}
+              ${picturesHTML(entry.attachments)}
               ${entry.follow_up_at ? `
                 <div class="followup">
                   ${entry.done_at
@@ -412,6 +414,7 @@ async function openCase(caseId) {
   };
 
   $('#ce-cancel').onclick = stopEditing;
+  wireAttachBox('centry', $('#modal'));
 
   $('#ce-add').onclick = async () => {
     const body = {
@@ -420,8 +423,10 @@ async function openCase(caseId) {
       detail: $('#ce-detail').value, follow_up_at: $('#ce-follow_up_at').value,
     };
     try {
+      let written = { id: editing };
       if (editing) await postJSON('/api/case-entries/' + editing, body);
-      else await postJSON(`/api/cases/${caseId}/entries`, body);
+      else written = await postJSON(`/api/cases/${caseId}/entries`, body);
+      await sendPending('centry', 'case_entries', written.id);
       toast(editing ? 'Corrected' : 'Added to the log', 'ok');
       openCase(caseId);
       if (S.view === 'cases') loadCases();
@@ -440,6 +445,7 @@ async function openCase(caseId) {
   };
 
   $('.caselog', $('#modal')).onclick = async event => {
+    if (await handlePictureClick(event, () => openCase(caseId))) return;
     const toggle = event.target.closest('[data-toggle]');
     if (toggle) {
       const wasDone = toggle.textContent.trim() === 'REOPEN';

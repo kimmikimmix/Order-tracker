@@ -253,7 +253,11 @@ def list_documents(order_id=None, unfiled=False, limit=500) -> list[dict]:
              LEFT JOIN companies c ON c.id = d.company_id"""
     params = []
     if unfiled:
-        sql += " WHERE d.order_id IS NULL"
+        # A photo hung on a line of a log is evidence, not paperwork
+        # waiting to be filed, so it does not nag from the DOCS page.
+        sql += """ WHERE d.order_id IS NULL
+                    AND NOT EXISTS (SELECT 1 FROM attachments a
+                                     WHERE a.doc_id = d.id)"""
     elif order_id:
         sql += " WHERE d.order_id = ?"
         params.append(order_id)

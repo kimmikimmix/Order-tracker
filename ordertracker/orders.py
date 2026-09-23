@@ -4,7 +4,7 @@ import datetime
 import re
 import sqlite3
 
-from . import config, db, geo, pcb, prefs
+from . import attach, config, db, geo, pcb, prefs
 
 ORDER_FIELDS = (
     "order_no", "company_id", "po_number", "product_code", "product_name",
@@ -253,6 +253,10 @@ def get_order(order_id: int) -> dict | None:
             (order_id,),
         )
     ]
+    pictures = attach.for_lines("status_history",
+                                [line["id"] for line in item["history"]])
+    for line in item["history"]:
+        line["attachments"] = pictures.get(line["id"], [])
     item["documents"] = [
         dict(d) for d in conn.execute(
             """SELECT id, filename, kind, mime, size, uploaded_at, extract_note,
@@ -501,6 +505,7 @@ def delete_note(entry_id: int) -> int:
     """Remove a line you wrote. Returns the order it was on."""
     conn = db.connect()
     row = _hand_written(conn, entry_id)
+    attach.remove_all("status_history", entry_id)   # its pictures too
     with conn:
         conn.execute("DELETE FROM status_history WHERE id = ?", (entry_id,))
         db.touch(conn)

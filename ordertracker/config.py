@@ -110,6 +110,8 @@ DOC_KINDS = {
     "CONTRACT": ("contract", "agreement", "terms", "msa", "nda"),
     "SPEC": ("spec", "drawing", "datasheet", "bom"),
     "EMAIL": (".eml", ".msg"),
+    "PHOTO": (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic",
+              "photo", "picture", "사진"),
 }
 
 

@@ -355,6 +355,7 @@ async function openFolder(folderId) {
         <div class="wide"><textarea id="fe-detail" rows="2"
           placeholder="what was said, agreed, or promised"></textarea></div>
       </div>
+      ${attachBoxHTML('fentry')}
       <div class="filterbar" style="padding:4px 0 12px">
         <button class="btn primary" id="fe-add">ADD TO THE LOG</button>
         <button class="btn hidden" id="fe-cancel">CANCEL</button>
@@ -373,6 +374,7 @@ async function openFolder(folderId) {
               ${entry.filename ? `<div class="subtle">file:
                 <a href="/api/documents/${entry.doc_id}/file" target="_blank"
                    style="color:var(--blue)">${esc(entry.filename)}</a></div>` : ''}
+              ${picturesHTML(entry.attachments)}
               ${entry.follow_up_at ? `
                 <div class="followup">
                   ${entry.done_at
@@ -466,6 +468,7 @@ async function openFolder(folderId) {
   };
 
   $('#fe-cancel').onclick = stopEditing;
+  wireAttachBox('fentry', $('#modal'));
 
   $('#fe-add').onclick = async () => {
     const body = {
@@ -474,8 +477,10 @@ async function openFolder(folderId) {
       detail: $('#fe-detail').value, follow_up_at: $('#fe-follow_up_at').value,
     };
     try {
+      let written = { id: editing };
       if (editing) await postJSON('/api/thread-entries/' + editing, body);
-      else await postJSON(`/api/threads/${folderId}/entries`, body);
+      else written = await postJSON(`/api/threads/${folderId}/entries`, body);
+      await sendPending('fentry', 'thread_entries', written.id);
       toast(editing ? 'Corrected' : 'Added to the log', 'ok');
       openFolder(folderId);
       if (S.view === 'folders') loadFolders();
@@ -493,6 +498,7 @@ async function openFolder(folderId) {
   };
 
   $('.caselog', $('#modal')).onclick = async event => {
+    if (await handlePictureClick(event, () => openFolder(folderId))) return;
     const toggle = event.target.closest('[data-toggle]');
     if (toggle) {
       const wasDone = toggle.textContent.trim() === 'REOPEN';

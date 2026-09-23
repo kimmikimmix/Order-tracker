@@ -718,6 +718,128 @@ function rowHTML(o, index) {
   </tr>`;
 }
 
+/* ---- pictures on a line ---------------------------------------------
+   A defect is argued with photographs, so a note — in a folder, in a
+   dispute, or in an order's own history — can carry them. Files picked
+   before the line exists wait here; the moment the line is written they
+   are sent to it. Drop them, paste them (a screenshot pastes straight in)
+   or pick them by hand. */
+
+const PENDING = {};
+
+function pendingFiles(key) {
+  if (!PENDING[key]) PENDING[key] = [];
+  return PENDING[key];
+}
+
+/* The box that sits under a note being written. */
+function attachBoxHTML(key) {
+  return `<div class="attachbox" data-tray="${key}">
+    <button type="button" class="btn tiny" data-pick="${key}">+ PHOTO / FILE</button>
+    <span class="pending" data-list="${key}"></span>
+    <span class="note">drop or paste one here too</span>
+    <input type="file" multiple class="hidden" data-input="${key}">
+  </div>`;
+}
+
+function renderPending(key) {
+  const list = $(`[data-list="${key}"]`);
+  if (!list) return;
+  list.innerHTML = pendingFiles(key).map((file, index) => `
+    <span class="chip">${esc(file.name)}
+      <button class="unpend" data-unpend="${index}" title="not this one">×</button>
+    </span>`).join('');
+}
+
+function addPending(key, files) {
+  if (!files || !files.length) return;
+  pendingFiles(key).push(...Array.from(files));
+  renderPending(key);
+  toast(`${files.length} file(s) ready — they go on when you save`, 'ok');
+}
+
+/* Where a dropped or pasted file should land, if anywhere. */
+function trayFor(node) {
+  if (!node || !node.closest) return '';
+  const box = node.closest('[data-tray]');
+  if (box) return box.dataset.tray;
+  const host = node.closest('#modal, #pane-history');
+  const inner = host ? $('[data-tray]', host) : null;
+  return inner ? inner.dataset.tray : '';
+}
+
+function wireAttachBox(key, root) {
+  const box = $(`[data-tray="${key}"]`, root || document);
+  if (!box) return;
+  const input = $(`[data-input="${key}"]`, box);
+  $(`[data-pick="${key}"]`, box).onclick = () => input.click();
+  input.onchange = () => { addPending(key, input.files); input.value = ''; };
+  ['dragover', 'dragenter'].forEach(name =>
+    box.addEventListener(name, e => { e.preventDefault(); box.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(name =>
+    box.addEventListener(name, () => box.classList.remove('over')));
+  box.addEventListener('click', event => {
+    const drop = event.target.closest('[data-unpend]');
+    if (!drop) return;
+    pendingFiles(key).splice(Number(drop.dataset.unpend), 1);
+    renderPending(key);
+  });
+  renderPending(key);
+}
+
+/* Send what is waiting to the line that now exists. */
+async function sendPending(key, owner, ownerId) {
+  const files = pendingFiles(key);
+  if (!files.length || !ownerId) return;
+  const form = new FormData();
+  files.forEach(file => form.append('files', file));
+  status(`attaching ${files.length} file(s)…`);
+  try {
+    const result = await api(`/api/attachments/${owner}/${ownerId}`,
+                             { method: 'POST', body: form });
+    (result.failed || []).forEach(f => toast(`${f.filename}: ${f.error}`, 'err'));
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+  PENDING[key] = [];
+  renderPending(key);
+  status('ready');
+}
+
+/* What is already on a line. */
+function picturesHTML(items) {
+  if (!items || !items.length) return '';
+  return `<div class="shots">${items.map(item => `
+    <span class="shot${item.is_image ? '' : ' asfile'}">
+      ${item.is_image
+        ? `<img src="/api/documents/${item.doc_id}/file"
+               alt="${esc(item.filename)}" title="${esc(item.filename)}"
+               data-open-doc="${item.doc_id}">`
+        : `<span class="filename" data-open-doc="${item.doc_id}"
+                 title="${esc(item.filename)}">${esc(item.filename)}</span>`}
+      <button class="shotx" data-unattach="${item.id}"
+              title="take this off the note">×</button>
+    </span>`).join('')}</div>`;
+}
+
+/* Clicks on a picture, anywhere the three logs are drawn. */
+async function handlePictureClick(event, afterRemoval) {
+  const open = event.target.closest('[data-open-doc]');
+  if (open) {
+    window.open('/api/documents/' + open.dataset.openDoc + '/file', '_blank');
+    return true;
+  }
+  const remove = event.target.closest('[data-unattach]');
+  if (!remove) return false;
+  if (!confirm('Take this file off the note?')) return true;
+  try {
+    await api('/api/attachments/' + remove.dataset.unattach, { method: 'DELETE' });
+  } catch (err) { toast(err.message, 'err'); return true; }
+  if (afterRemoval) afterRemoval();
+  refreshSaved();
+  return true;
+}
+
 /* ---- the history, and your own notes in it ---- */
 
 function historyRowHTML(h) {
@@ -740,6 +862,7 @@ function historyRowHTML(h) {
         : `<span class="chip ${cls(h.to_status)}">${esc(h.to_status)}</span>`);
   return `<div class="ev">
       <div>${head}${h.note ? `<span style="color:var(--dim)"> — ${esc(h.note)}</span>` : ''}</div>
+      ${picturesHTML(h.attachments)}
       <div class="when">${esc(h.changed_at)}${h.changed_by ? ' · ' + esc(h.changed_by) : ''}
         ${h.by_hand ? `<button class="btn tiny" data-note-edit="${h.id}">EDIT</button>
                        <button class="btn tiny danger" data-note-del="${h.id}">DEL</button>`
@@ -752,13 +875,15 @@ async function addOrderNote() {
   const o = S.openOrder;
   const note = $('#h-note').value.trim();
   if (!note) { toast('Type the note first.', 'err'); return; }
+  let written;
   try {
-    await postJSON(`/api/orders/${o.id}/history`, {
+    written = await postJSON(`/api/orders/${o.id}/history`, {
       note,
       changed_at: $('#h-changed_at').value,
       changed_by: $('#h-changed_by').value,
     });
   } catch (err) { toast(err.message, 'err'); return; }
+  await sendPending('note', 'status_history', written.id);
   S.noteEdit = null;
   toast('Noted', 'ok');
   await openOrder(o.id, 'history');
@@ -773,6 +898,7 @@ async function saveOrderNote(entryId) {
       changed_by: $('#he-changed_by').value,
     });
   } catch (err) { toast(err.message, 'err'); return; }
+  await sendPending('note', 'status_history', entryId);
   S.noteEdit = null;
   await openOrder(S.openOrder.id, 'history');
   refreshSaved();
@@ -1389,6 +1515,7 @@ function renderDetail() {
                  placeholder="a call, a promise made, a reason — anything worth remembering">
           <button class="btn primary" id="h-add">ADD A NOTE</button>
         </div>
+        ${attachBoxHTML('note')}
         <div class="timeline">
           ${o.history.map(h => historyRowHTML(h)).join('')}
         </div>
@@ -1404,7 +1531,10 @@ function renderDetail() {
     $('#h-note', historyPane).onkeydown = event => {
       if (event.key === 'Enter') addOrderNote();
     };
-    historyPane.onclick = event => {
+    wireAttachBox('note', historyPane);
+    historyPane.onclick = async event => {
+      if (await handlePictureClick(event,
+            () => openOrder(S.openOrder.id, 'history'))) return;
       const edit = event.target.closest('[data-note-edit]');
       const save = event.target.closest('[data-note-save]');
       const del = event.target.closest('[data-note-del]');
@@ -1895,11 +2025,23 @@ window.addEventListener('drop', e => {
   $('#dropveil').classList.add('hidden');
   if (e.target.closest('.dropzone')) return;   // its own handler deals with it
   e.preventDefault();
+  const tray = trayFor(e.target);              // a note is being written
+  if (tray) { addPending(tray, e.dataTransfer.files); return; }
   const orderId = S.openOrder ? S.openOrder.id : null;
   uploadFiles(e.dataTransfer.files, orderId, () => {
     if (S.openOrder) openOrder(S.openOrder.id);
     else if (S.view === 'docs') renderDocs();
   });
+});
+
+/* A screenshot pastes straight onto the note being written. */
+window.addEventListener('paste', event => {
+  const files = event.clipboardData && event.clipboardData.files;
+  if (!files || !files.length) return;
+  const tray = trayFor(document.activeElement) || trayFor(event.target);
+  if (!tray) return;
+  event.preventDefault();
+  addPending(tray, files);
 });
 
 /* ------------------------------------------------------------------ wire */
