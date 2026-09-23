@@ -64,7 +64,7 @@ def actions_due(days: int = SOON_DAYS) -> list[dict]:
         out.append(_item(
             "ACTION", action["summary"],
             f"{action['ref']} · {action.get('company') or ''}"
-            f" · {action.get('order_no') or ''}".strip(" ·"),
+            f" · {orders.headline(action)}".strip(" ·"),
             f"case/{action['case_id']}",
             when=_when(action["follow_up_at"]), late=action["late"],
             chip="CASE"))
@@ -103,7 +103,7 @@ def cases_due(days: int = SOON_DAYS) -> list[dict]:
         out.append(_item(
             "CASE", case["title"],
             f"{case['ref']} · {case.get('company') or ''}"
-            f" · {case.get('order_no') or ''}".strip(" ·"),
+            f" · {orders.headline(case)}".strip(" ·"),
             f"case/{case['id']}",
             when=_when(due), late=case["overdue"], chip=case.get("severity")))
     return out
@@ -120,9 +120,9 @@ def orders_due(days: int = SOON_DAYS) -> list[dict]:
         if not promised or promised > horizon:
             continue
         out.append(_item(
-            "ORDER", f"{order['order_no']} — {order.get('company') or ''}",
+            "ORDER", f"{orders.headline(order)} — {order.get('company') or ''}",
             " · ".join(filter(None, (
-                order.get("product_code") or order.get("product_name"),
+                orders.sub_headline(order),
                 order.get("description"), order["status"]))),
             f"order/{order['id']}",
             when=_when(promised), late=promised < today,
@@ -158,7 +158,7 @@ def today(days: int = SOON_DAYS) -> dict:
          "items": actions_due(days)},
         {"key": "email", "title": "EMAIL TO CHECK", "view": "inbox",
          "items": email_to_check()},
-        {"key": "orders", "title": "ORDERS DUE", "view": "blotter",
+        {"key": "orders", "title": "ORDERS DUE", "view": "orders",
          "items": orders_due(days)},
         {"key": "folders", "title": "FOLDERS TO COME BACK TO",
          "view": "folders", "items": folders_due(days)},

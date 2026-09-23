@@ -681,7 +681,8 @@ def set_direction(mail_id: int, direction: str) -> dict:
 
 def get(mail_id: int) -> dict | None:
     row = db.connect().execute(
-        """SELECT e.*, o.order_no, c.name AS company,
+        """SELECT e.*, o.order_no, o.product_code, o.product_name,
+                  c.name AS company,
                   t.ref AS folder_ref, t.topic AS folder_topic
            FROM emails e
            LEFT JOIN orders o ON o.id = e.order_id
@@ -699,7 +700,8 @@ def get(mail_id: int) -> dict | None:
 def list_mail(needs_review=None, order_id=None, company_id=None,
               category=None, direction=None, query=None,
               limit=300) -> list[dict]:
-    sql = ["""SELECT e.*, o.order_no, c.name AS company,
+    sql = ["""SELECT e.*, o.order_no, o.product_code, o.product_name,
+                     c.name AS company,
                      t.ref AS folder_ref, t.topic AS folder_topic
               FROM emails e
               LEFT JOIN orders o ON o.id = e.order_id

@@ -1,6 +1,6 @@
 """The order book as a picture: who, what, and what is attached to it.
 
-A blotter is a good way to read a hundred orders and a poor way to see that
+A list is a good way to read a hundred orders and a poor way to see that
 one customer has three disputes and nothing shipped. This builds the same
 data as a small graph — a hub with its neighbours fanned around it — and
 lets the front end draw it.
@@ -90,7 +90,7 @@ def overview() -> dict:
                             ("OPEN ORDERS",
                              str(sum(c["open_count"] for c in companies))),
                             ("WITH SOMETHING FLAGGED", str(len(flagged)))],
-                   "links": [("SEE THE BLOTTER", "blotter"),
+                   "links": [("SEE ALL ORDERS", "orders"),
                              ("SEE THE CUSTOMERS", "companies")]},
     }
 
@@ -118,10 +118,9 @@ def for_company(company_id: int) -> dict | None:
     their_orders = orders.list_orders(company_id=company_id, include_closed=True,
                                       sort="promise_date", limit=200)
     order_nodes = [
-        _node(f"order/{order['id']}", "ORDER", order["order_no"],
-              sub=" · ".join(filter(None, (
-                  order.get("product_code") or order.get("product_name") or "",
-                  order["status"]))),
+        _node(f"order/{order['id']}", "ORDER", orders.headline(order),
+              sub=" · ".join(filter(None, (orders.sub_headline(order),
+                                           order["status"]))),
               tone=_order_tone(order),
               badges=[a for a in order["alerts"]],
               drill=f"order/{order['id']}", link=f"order/{order['id']}",
@@ -233,9 +232,10 @@ def for_order(order_id: int) -> dict | None:
     spec = order.get("spec") or {}
     cost = (spec.get("cost") or {}).get("total") or {}
     rows = [
+        ("PRODUCT", order.get("product_name") or "—"),
+        ("PRODUCT NO", order.get("product_code") or "—"),
+        ("ORDER NO", order["order_no"]),
         ("CUSTOMER", order.get("company") or "—"),
-        ("PRODUCT", " ".join(filter(None, (order.get("product_code"),
-                                           order.get("product_name")))) or "—"),
         ("CUSTOMER PO", order.get("po_number") or "—"),
         ("STATUS", order["status"]),
         ("PROMISED", order.get("promise_date") or "—"),
@@ -245,15 +245,16 @@ def for_order(order_id: int) -> dict | None:
     ]
 
     return {
-        "hub": _node(f"order/{order_id}", "ORDER", order["order_no"],
-                     sub=order.get("company") or "",
+        "hub": _node(f"order/{order_id}", "ORDER", orders.headline(order),
+                     sub=" · ".join(filter(None, (
+                         order["order_no"], order.get("company") or ""))),
                      tone=_order_tone(order), badges=order["alerts"]),
         "groups": [
             _group("THE PROCESS", stage_nodes, side="left"),
             _group("ON THIS ORDER", attached, side="right"),
         ],
         "detail": {
-            "kind": "ORDER", "title": order["order_no"], "rows": rows,
+            "kind": "ORDER", "title": orders.headline(order), "rows": rows,
             "money_rows": ["VALUE", "QUOTED"],
             "pipeline": {"stages": config.PIPELINE, "here": order["status"]},
             "alerts": order["alerts"],

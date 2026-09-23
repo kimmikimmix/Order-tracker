@@ -256,7 +256,7 @@ CREATE INDEX IF NOT EXISTS idx_docs_sha     ON documents(sha256);
 
 -- The PCB build specification and cost sheet for an order. One row per
 -- order, created the moment anything on the spec form is filled in. Kept
--- apart from orders so the blotter stays quick to read and so an order with
+-- apart from orders so the order list stays quick to read and so an order with
 -- no engineering detail costs nothing to store.
 CREATE TABLE IF NOT EXISTS order_specs (
     order_id          INTEGER PRIMARY KEY
@@ -580,7 +580,7 @@ def repair_dates(conn: sqlite3.Connection) -> int:
     """Clear date columns holding the text "None".
 
     Early versions turned a missing date into the string "None", which then
-    showed up in the blotter and stopped the overdue check working. Absent
+    showed up in the order list and stopped the overdue check working. Absent
     dates belong in the database as NULL.
     """
     fixed = 0

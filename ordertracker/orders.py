@@ -24,7 +24,39 @@ SORTABLE = {
     "owner": "o.owner",
     "updated_at": "o.updated_at",
     "priority": "o.priority",
+    "product_name": "o.product_name",
 }
+
+
+def _field(row, key) -> str:
+    """One column of a row that may be a dict or a database row."""
+    try:
+        value = row[key]
+    except (KeyError, IndexError, TypeError):
+        return ""
+    return str(value).strip() if value is not None else ""
+
+
+def headline(order) -> str:
+    """What an order is called on screen.
+
+    The office thinks in boards, not in sales-order numbers: "MARINE
+    BACKPLANE" is recognised across a room and SO-2607 is not. So the
+    product name leads wherever an order is named, the product number
+    stands in when the name is blank, and the order number catches the
+    orders booked before anybody knew what was being made.
+    """
+    return (_field(order, "product_name") or _field(order, "product_code")
+            or _field(order, "order_no"))
+
+
+def sub_headline(order) -> str:
+    """The quieter second line: the order number, and the code if unused."""
+    order_no = _field(order, "order_no")
+    code = _field(order, "product_code")
+    if code and _field(order, "product_name"):
+        return " · ".join(filter(None, (order_no, code)))
+    return order_no if headline(order) != order_no else ""
 
 
 def today() -> datetime.date:
@@ -564,7 +596,8 @@ def search(text: str, limit: int = 40) -> dict:
 
         doc_rows = conn.execute(
             """SELECT d.id, d.filename, d.kind, d.order_id, d.uploaded_at,
-                      o.order_no, c.name AS company,
+                      o.order_no, o.product_code, o.product_name,
+                      c.name AS company,
                       snippet(documents_fts, 1, '[', ']', ' … ', 14) AS snippet
                FROM documents_fts f
                JOIN documents d ON d.id = f.doc_id
@@ -770,7 +803,8 @@ def reorder_sources(company_id=None, limit: int = 40) -> list[dict]:
         where.append("o.company_id = ?")
         params.append(int(company_id))
     rows = conn.execute(
-        f"""SELECT o.id, o.order_no, o.description, o.order_date, c.name AS company,
+        f"""SELECT o.id, o.order_no, o.product_code, o.product_name,
+                   o.description, o.order_date, c.name AS company,
                    s.product_type, s.layers, s.qty, s.lots, s.quote_ref,
                    s.pcb_total_krw, s.updated_at
             FROM order_specs s

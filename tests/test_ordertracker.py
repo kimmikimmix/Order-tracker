@@ -3597,6 +3597,134 @@ class TestProductOnAnOrder(unittest.TestCase):
         self.assertIn("motor controller", page)
 
 
+class TestTheProductLeads(unittest.TestCase):
+    """An order is named by the board, not by the sales-order number.
+
+    The office recognises "motor controller" across a room and OT-1 not at
+    all, so the product name leads wherever an order is named and the
+    number follows it. Orders booked before anybody knew what was being
+    made keep the number as their name, which is never empty.
+    """
+
+    def setUp(self):
+        fresh_db()
+        self.named = orders.create_order({
+            "company": "Sakura Denshi KK", "order_no": "OT-1",
+            "product_code": "PN-4471-B", "product_name": "motor controller",
+            "status": "IN PRODUCTION",
+            "promise_date": (datetime.date.today()
+                             - datetime.timedelta(days=3)).isoformat()})
+        self.bare = orders.create_order({
+            "company": "Sakura Denshi KK", "order_no": "OT-2",
+            "status": "CONFIRMED"})
+
+    # --- the rule itself --------------------------------------------------
+
+    def test_the_name_comes_first_then_the_number_then_the_order(self):
+        self.assertEqual(orders.headline(orders.get_order(self.named)),
+                         "motor controller")
+        self.assertEqual(
+            orders.headline({"product_code": "PN-1", "order_no": "OT-9"}),
+            "PN-1")
+        self.assertEqual(orders.headline({"order_no": "OT-9"}), "OT-9")
+        self.assertEqual(orders.headline({"product_name": "  ",
+                                          "order_no": "OT-9"}), "OT-9")
+
+    def test_an_order_with_no_product_at_all_still_has_a_name(self):
+        self.assertEqual(orders.headline(orders.get_order(self.bare)), "OT-2")
+        self.assertEqual(orders.headline({}), "")
+        self.assertEqual(orders.headline(None), "")
+
+    def test_the_quiet_second_line_never_repeats_the_first(self):
+        self.assertEqual(orders.sub_headline(orders.get_order(self.named)),
+                         "OT-1 · PN-4471-B")
+        self.assertEqual(orders.sub_headline(orders.get_order(self.bare)), "",
+                         "an order named by its number says it once")
+        self.assertEqual(
+            orders.sub_headline({"product_code": "PN-1", "order_no": "OT-9"}),
+            "OT-9")
+
+    def test_it_reads_a_database_row_as_happily_as_a_dict(self):
+        row = db.connect().execute(
+            "SELECT * FROM orders WHERE id = ?", (self.named,)).fetchone()
+        self.assertEqual(orders.headline(row), "motor controller")
+
+    # --- everything that lists an order can name it -----------------------
+
+    def test_a_document_carries_the_product_of_the_order_it_is_filed_on(self):
+        documents.store("po.pdf", b"%PDF-1.4 po", order_id=self.named)
+        listed = documents.list_documents()[0]
+        self.assertEqual(orders.headline(listed), "motor controller")
+
+    def test_an_email_carries_it(self):
+        letter = (b"From: Ha-eun Park <haeun@sakura.example>\r\n"
+                  b"To: sales@ourpcb.example\r\nSubject: OT-1 schedule\r\n"
+                  b"Date: Mon, 21 Sep 2026 09:30:00 +0200\r\n\r\nAnything.\r\n")
+        item = mail.intake("a.eml", letter, order_id=self.named)
+        self.assertEqual(orders.headline(mail.get(item["id"])),
+                         "motor controller")
+        self.assertEqual(orders.headline(mail.list_mail()[0]),
+                         "motor controller")
+
+    def test_a_dispute_carries_it(self):
+        case_id = cases.open_case({"order_id": self.named, "title": "12 open"})
+        self.assertEqual(orders.headline(cases.get_case(case_id)),
+                         "motor controller")
+        self.assertEqual(orders.headline(cases.list_cases()[0]),
+                         "motor controller")
+
+    def test_a_folder_carries_it(self):
+        folder = threads.open_folder({"company": "Sakura Denshi KK",
+                                      "topic": "a question",
+                                      "order_id": self.named})
+        self.assertEqual(orders.headline(threads.get_folder(folder)),
+                         "motor controller")
+        self.assertEqual(orders.headline(threads.list_folders()[0]),
+                         "motor controller")
+
+    def test_the_repeat_an_order_list_carries_it(self):
+        orders.save_spec(self.named, {"product_type": "RIGID", "layers": 4})
+        self.assertEqual(orders.headline(orders.reorder_sources()[0]),
+                         "motor controller")
+
+    # --- where it is read -------------------------------------------------
+
+    def test_todays_list_calls_the_order_by_its_product(self):
+        line = [item for group in briefing.today()["groups"]
+                if group["key"] == "orders" for item in group["items"]][0]
+        self.assertTrue(line["title"].startswith("motor controller"),
+                        line["title"])
+        self.assertIn("OT-1", line["detail"])
+
+    def test_the_printed_sheet_leads_with_the_product(self):
+        page = printsheet.render(self.named)
+        self.assertLess(page.index("motor controller"), page.index("<h1>")
+                        + 200)
+        self.assertIn("<h1>motor controller</h1>", page)
+        self.assertIn("OT-1", page)
+
+    def test_a_sheet_for_an_order_with_no_product_keeps_its_number(self):
+        self.assertIn("<h1>OT-2</h1>", printsheet.render(self.bare))
+
+    def test_the_order_list_on_screen_puts_the_product_column_first(self):
+        import re
+        app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        columns = re.search(r"const COLUMNS = \[(.*?)\n\];", app, re.S).group(1)
+        keys = re.findall(r"key: '(\w+)'", columns)
+        self.assertEqual(keys[:2], ["product", "order_no"])
+
+    def test_the_view_is_called_orders_and_the_blotter_is_gone(self):
+        page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('data-view="orders"><b>3</b> ORDERS', page)
+        for script in sorted((ROOT / "web").glob("*.js")):
+            body = script.read_text(encoding="utf-8")
+            self.assertNotIn("show('blotter')", body, script.name)
+            self.assertNotIn("view-blotter", body, script.name)
+        app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("=== 'blotter' ? 'orders'", app,
+                      "an old #blotter bookmark should still open the orders")
+
+
 class TestWhatNeedsDoingToday(unittest.TestCase):
     """The first thing on the first page: one list, from four places."""
 
@@ -3763,8 +3891,10 @@ class TestTheNetworkView(unittest.TestCase):
         view = self.graph.view(f"company/{self.company}")
         self.assertEqual(view["hub"]["label"], "Sakura Denshi KK")
         listed = self.nodes(view, "ORDERS")
-        self.assertEqual(sorted(n["label"] for n in listed), ["OT-1", "OT-2"])
-        late = [n for n in listed if n["label"] == "OT-1"][0]
+        # The one with a product is named by it; the other keeps its number.
+        self.assertEqual(sorted(n["label"] for n in listed), ["OT-2", "PN-1"])
+        late = [n for n in listed if n["label"] == "PN-1"][0]
+        self.assertIn("OT-1", late["sub"])
         self.assertEqual(late["tone"], self.graph.TONE_LATE)
         self.assertIn("OVERDUE", late["badges"])
         self.assertEqual(late["drill"], f"order/{self.late}")
@@ -3815,7 +3945,10 @@ class TestTheNetworkView(unittest.TestCase):
         detail = self.graph.view(f"order/{self.late}")["detail"]
         self.assertEqual(detail["pipeline"]["here"], "IN PRODUCTION")
         self.assertIn("OVERDUE", detail["alerts"])
-        self.assertEqual(dict(detail["rows"])["PRODUCT"], "PN-1")
+        rows = dict(detail["rows"])
+        self.assertEqual(rows["PRODUCT NO"], "PN-1")
+        self.assertEqual(rows["ORDER NO"], "OT-1")
+        self.assertEqual(detail["title"], "PN-1")
         links = dict(detail["links"])
         self.assertEqual(links["OPEN THE ORDER"], f"order/{self.late}")
         self.assertEqual(links["PRINT SHEET"], f"print/order/{self.late}")

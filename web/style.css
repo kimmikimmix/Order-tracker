@@ -256,6 +256,7 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
   display: flex; align-items: center; gap: 10px; background: var(--panel-2);
 }
 .dhead .ono { font-size: 15px; font-weight: 700; color: var(--amber); }
+.dhead .ono-no { color: var(--dim); letter-spacing: .04em; }
 .dhead .co  { color: var(--text); }
 .dbody { flex: 1; overflow: auto; padding: 12px; }
 .dclose { margin-left: auto; }

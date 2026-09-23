@@ -8,13 +8,14 @@ filed against the order it belongs to and searchable by its contents.
 It runs entirely on your own machine. No server, no cloud account, no
 subscription, and nothing leaves the computer.
 
-![the blotter and an open order](docs/screenshot-blotter.png)
+![the order list and an open order](docs/screenshot-orders.png)
 
 ## What it does
 
-**One order book.** Every order across every customer in a single sortable,
-filterable blotter — order number, customer, their PO number, stage, promised
-date, days until due, value, owner, document count.
+**One order book.** Every order across every customer on a single sortable,
+filterable ORDERS page, led by the product — product name, order number,
+customer, their PO number, stage, promised date, days until due, value, owner,
+document count.
 
 **Draws the whole book as a network.** The NETWORK page puts your customers
 around a hub, coloured by whether anything is wrong with them. Click one and
@@ -104,12 +105,15 @@ confirm the mapping before anything is written. Re-importing a fresh export
 updates the orders already on file, matched on order number, which is how you
 refresh statuses in bulk.
 
-**Knows the product, not just the order.** Every order carries a product
+**Names an order by what is being made.** Every order carries a product
 number and a product name — a part number, a model, or whichever of the two
-you actually use. Both are searchable, both appear in the blotter and on the
-printed sheet, both come across from a spreadsheet import, and the order form
-offers everything you have made before so a repeat board is picked rather
-than spelled differently the second time.
+you actually use. The product name is what an order is called everywhere it
+appears: the orders page, the network, the today list, the email tray, the
+folders, the disputes, the documents and the printed sheet, with the order
+number following it quietly. An order with no product yet keeps its number as
+its name. Both fields are searchable, both come across from a spreadsheet
+import, and the order form offers everything you have made before so a repeat
+board is picked rather than spelled differently the second time.
 
 **Fills in what it already knows.** A new order is dated today and its
 quotation section carries the customer's contact person across as soon as
@@ -127,7 +131,7 @@ starts, keeping the last several copies. The status bar always shows when your
 work was last saved and last backed up.
 
 **Keyboard-first.** `/` to search, `1`–`0` for views, `j`/`k` to move down the
-blotter, `enter` to open, `n` for a new order, `esc` to close.
+order list, `enter` to open, `n` for a new order, `esc` to close.
 
 ## The build specification and cost sheet
 
@@ -737,7 +741,8 @@ These are stored with your data, so they travel with it to another drive.
 For the rest, open `ordertracker/config.py`. It is meant to be edited:
 
 - **`PIPELINE`** — the stages an order moves through. Rename them to whatever
-  your business says. The blotter, the board and the stage buttons all follow.
+  your business says. The orders page, the board and the stage buttons all
+  follow.
 - **`DATE_INPUT_ORDER`** — `"MDY"` reads `03/12/2026` as 3 March;
   `"DMY"` reads it as 12 March. Unambiguous dates (`2026-12-03`, `3-Dec-2026`)
   always work either way.

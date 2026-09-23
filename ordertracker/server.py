@@ -92,7 +92,7 @@ def _companies() -> list[dict]:
 
 
 def _dashboard() -> dict:
-    """The blotter's own figures, plus the trays that need attention."""
+    """The order book's own figures, plus the trays that need attention."""
     board = orders.dashboard()
     board["mail"] = mail.tray()
     board["cases"] = cases.summary()
@@ -632,8 +632,8 @@ def api_export(handler, match):
     rows = orders.list_orders(limit=100000)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    columns = ["order_no", "company", "po_number", "product_code",
-               "product_name", "description", "status",
+    columns = ["product_name", "product_code", "order_no", "company",
+               "po_number", "description", "status",
                "value", "currency", "order_date", "promise_date", "ship_date",
                "owner", "priority", "doc_count", "notes"]
     writer.writerow(columns + ["alerts"])

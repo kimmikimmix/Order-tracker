@@ -279,7 +279,7 @@ function followGraphLink(link) {
   if (link.startsWith('company-orders/')) {
     S.filters = { ...S.filters, company_id: link.split('/')[1], alert: '',
                   closed: '1' };
-    show('blotter');
+    show('orders');
     return;
   }
   if (link.startsWith('company-folders/')) {

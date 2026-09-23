@@ -164,7 +164,7 @@ function folderCard(folder) {
         <span class="fref">${esc(folder.ref)}</span>
         <span class="chip">${esc(folder.kind || 'ENQUIRY')}</span>
         <span class="chip ${folder.open ? 'a-DUESOON' : 'ok'}">${esc(folder.status)}</span>
-        ${folder.order_no ? `<span class="chip">${esc(folder.order_no)}</span>` : ''}
+        ${folder.order_no ? `<span class="chip">${esc(orderName(folder))}</span>` : ''}
       </div>
       <div class="ftopic">${esc(folder.topic)}</div>
       <div class="fwho">${esc(folder.company)}

@@ -1,6 +1,6 @@
 """The PCB half of an order: build specification and costing.
 
-An order in the blotter says who, how much and when. This module holds what
+An order in the order book says who, how much and when. This module holds what
 is actually being made — layers, materials, finish, drills — and turns the
 won figures typed on the cost sheet into the dollar totals a customer sees.
 

@@ -84,7 +84,7 @@ function paintCases() {
     <table class="grid">
       <thead><tr>
         <th style="width:110px">DUE</th><th style="width:110px">CASE</th>
-        <th style="width:140px">ORDER</th><th style="width:180px">CUSTOMER</th>
+        <th style="width:140px">PRODUCT</th><th style="width:180px">CUSTOMER</th>
         <th>WHAT NEEDS DOING</th><th style="width:90px"></th>
       </tr></thead>
       <tbody>
@@ -93,7 +93,7 @@ function paintCases() {
             <td style="color:${f.late ? 'var(--red)' : 'var(--amber)'}">
               ${esc(f.follow_up_at)}${f.late ? ' · LATE' : ''}</td>
             <td>${esc(f.ref)}</td>
-            <td>${esc(f.order_no || '—')}</td>
+            <td>${f.order_no ? esc(orderName(f)) : '—'}</td>
             <td>${esc(f.company || '—')}</td>
             <td>${esc(f.summary)}
               <span class="subtle">${esc(f.title || '')}</span></td>
@@ -122,7 +122,7 @@ function paintCases() {
       <thead><tr>
         <th style="width:100px">CASE</th><th style="width:100px">OPENED</th>
         <th>TITLE</th><th style="width:170px">CUSTOMER</th>
-        <th style="width:120px">ORDER</th><th style="width:110px">KIND</th>
+        <th style="width:120px">PRODUCT</th><th style="width:110px">KIND</th>
         <th style="width:90px">SEVERITY</th><th style="width:150px">STATUS</th>
         <th class="num" style="width:70px">QTY</th>
         <th class="num" style="width:120px">CLAIM</th>
@@ -136,7 +136,7 @@ function paintCases() {
             <td><b>${esc(c.title)}</b>
               ${c.open_actions ? `<span class="chip">${c.open_actions} ACTION(S)</span>` : ''}</td>
             <td>${esc(c.company || '—')}</td>
-            <td>${esc(c.order_no || '—')}</td>
+            <td>${c.order_no ? esc(orderName(c)) : '—'}</td>
             <td>${esc(c.kind)}</td>
             <td style="color:${SEVERITY_COLOUR[c.severity] || 'var(--dim)'}">${esc(c.severity)}</td>
             <td><span class="chip ${c.open ? 'a-DUESOON' : 'ok'}">${esc(c.status)}</span>
@@ -302,7 +302,7 @@ async function openCase(caseId) {
   const kinds = S.boot.case_entry_kinds || ['NOTE'];
 
   modal(`${esc(item.ref)} — ${esc(item.company || '')}
-         ${item.order_no ? '· ' + esc(item.order_no) : ''}`, `
+         ${item.order_no ? '· ' + esc(orderName(item)) : ''}`, `
     <div class="mtabs">
       <button data-ctab="log" class="active">LOG (${item.entries.length})</button>
       <button data-ctab="case">THE CASE</button>

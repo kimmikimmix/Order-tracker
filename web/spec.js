@@ -410,11 +410,12 @@ async function pickPreviousSpec(companyName, onPicked) {
       repeats. Everything on the spec and cost sheet is copied across; the
       order number, dates and PO are left alone.</div>
     <table class="grid pick">
-      <thead><tr><th>ORDER</th><th>CUSTOMER</th><th>DESCRIPTION</th>
+      <thead><tr><th>PRODUCT</th><th>ORDER</th><th>CUSTOMER</th><th>DESCRIPTION</th>
         <th>TYPE</th><th class="num">LAYERS</th><th class="num">QTY</th>
         <th>QUOTE REF</th></tr></thead>
       <tbody>
         ${list.map(o => `<tr data-pick="${o.id}">
+          <td><b>${esc(orderName(o))}</b></td>
           <td style="color:var(--amber)">${esc(o.order_no)}</td>
           <td>${esc(o.company)}</td>
           <td style="color:var(--dim)">${esc(o.description || '')}</td>

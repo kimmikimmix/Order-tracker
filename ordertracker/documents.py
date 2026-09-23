@@ -246,7 +246,8 @@ def list_documents(order_id=None, unfiled=False, limit=500) -> list[dict]:
     sql = """SELECT d.id, d.filename, d.kind, d.mime, d.size, d.uploaded_at,
                     d.order_id, d.extract_note,
                     length(COALESCE(d.content_text,'')) AS text_len,
-                    o.order_no, c.name AS company
+                    o.order_no, o.product_code, o.product_name,
+                    c.name AS company
              FROM documents d
              LEFT JOIN orders o ON o.id = d.order_id
              LEFT JOIN companies c ON c.id = d.company_id"""

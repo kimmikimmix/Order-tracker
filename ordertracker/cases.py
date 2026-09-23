@@ -232,6 +232,7 @@ def get_case(case_id: int) -> dict | None:
     conn = db.connect()
     row = conn.execute(
         """SELECT k.*, o.order_no, o.po_number, o.status AS order_status,
+                  o.product_code, o.product_name,
                   c.name AS company, c.contact_name, c.contact_email
            FROM cases k
            LEFT JOIN orders o ON o.id = k.order_id
@@ -247,7 +248,8 @@ def get_case(case_id: int) -> dict | None:
 
 def list_cases(status=None, order_id=None, company_id=None, open_only=False,
                query=None, limit=500) -> list[dict]:
-    sql = ["""SELECT k.*, o.order_no, c.name AS company,
+    sql = ["""SELECT k.*, o.order_no, o.product_code, o.product_name,
+                     c.name AS company,
                      (SELECT COUNT(*) FROM case_entries e
                        WHERE e.case_id = k.id) AS entries,
                      (SELECT COUNT(*) FROM case_entries e
@@ -290,7 +292,8 @@ def follow_ups(within_days: int = 7, include_overdue: bool = True) -> list[dict]
     horizon = _plus_days(within_days)
     rows = db.connect().execute(
         """SELECT e.*, k.ref, k.title, k.status, k.severity, k.order_id,
-                  o.order_no, c.name AS company
+                  o.order_no, o.product_code, o.product_name,
+                  c.name AS company
            FROM case_entries e
            JOIN cases k ON k.id = e.case_id
            LEFT JOIN orders o ON o.id = k.order_id

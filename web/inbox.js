@@ -52,7 +52,7 @@ async function loadInboxOrders() {
 function orderOptions(selectedId) {
   const rows = (MAIL.orders || []).map(o =>
     `<option value="${o.id}" ${Number(selectedId) === o.id ? 'selected' : ''}>
-       ${esc(o.order_no)} — ${esc(o.company)}${o.po_number ? ' · PO ' + esc(o.po_number) : ''}
+       ${esc(orderName(o))} — ${esc(o.company)}${o.order_no ? ' · ' + esc(o.order_no) : ''}${o.po_number ? ' · PO ' + esc(o.po_number) : ''}
      </option>`).join('');
   return `<option value="">— not filed against an order —</option>${rows}`;
 }
@@ -148,11 +148,12 @@ function paintInbox() {
             </td>
             <td><span class="chip k-${esc(item.category)}">${esc(item.category)}</span></td>
             <td>${item.order_no
-                  ? `<a href="#order/${item.order_id}" class="ordlink">${esc(item.order_no)}</a>`
+                  ? `<a href="#order/${item.order_id}" class="ordlink">${esc(orderName(item))}</a>`
                   : (item.folder_ref
                       ? `<a href="#folder/${item.thread_id}" class="ordlink">${esc(item.folder_ref)}</a>`
                       : '<span class="subtle">no order</span>')}
               <div class="subtle">${esc(item.company || 'no customer')}
+                ${item.order_no ? '· ' + esc(item.order_no) : ''}
                 ${item.order_no && item.folder_ref
                   ? '· ' + esc(item.folder_ref) : ''}</div></td>
             <td>${confidenceChip(item)}</td>

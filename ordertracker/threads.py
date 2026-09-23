@@ -279,7 +279,7 @@ def get_folder(folder_id: int) -> dict | None:
     conn = db.connect()
     row = conn.execute(
         """SELECT t.*, c.name AS company, c.contact_name, c.contact_email,
-                  o.order_no
+                  o.order_no, o.product_code, o.product_name
            FROM threads t
            JOIN companies c ON c.id = t.company_id
            LEFT JOIN orders o ON o.id = t.order_id
@@ -301,7 +301,8 @@ def get_folder(folder_id: int) -> dict | None:
 
 def list_folders(company_id=None, status=None, open_only=False, query=None,
                  limit=500) -> list[dict]:
-    sql = ["""SELECT t.*, c.name AS company, o.order_no,
+    sql = ["""SELECT t.*, c.name AS company,
+                     o.order_no, o.product_code, o.product_name,
                      (SELECT COUNT(*) FROM emails e
                        WHERE e.thread_id = t.id) AS email_count,
                      (SELECT COUNT(*) FROM thread_entries x

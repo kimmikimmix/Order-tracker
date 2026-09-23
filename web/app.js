@@ -31,6 +31,24 @@ const money = (value, currency) => {
 const cls = status => 's-' + String(status || '').replace(/[^A-Za-z]/g, '');
 const acls = alert => 'a-' + String(alert || '').replace(/[^A-Za-z]/g, '');
 
+/* ---- what an order is called ----------------------------------------
+   The office thinks in boards, not in sales-order numbers, so the product
+   name leads wherever an order is named and the number follows it quietly.
+   Orders booked before anybody knew what was being made keep the number as
+   their name, which is never empty.  Mirrors headline() on the server. */
+
+function orderName(o) {
+  if (!o) return '';
+  return (o.product_name || o.product_code || o.order_no || '').toString();
+}
+
+function orderSub(o) {
+  if (!o) return '';
+  const bits = [o.order_no];
+  if (o.product_name && o.product_code) bits.push(o.product_code);
+  return bits.filter(Boolean).join(' · ');
+}
+
 function dayText(days) {
   if (days === null || days === undefined) return '<span style="color:var(--dimmer)">—</span>';
   if (days < 0) return `<span style="color:var(--red)">${days}d late</span>`;
@@ -211,7 +229,7 @@ function renderNavCounts() {
 /* The address bar mirrors where you are, so a view, a filter or a single
    order can be bookmarked or pasted to a colleague on the same machine. */
 
-const NAV_VIEWS = ['dash', 'graph', 'blotter', 'companies', 'inbox',
+const NAV_VIEWS = ['dash', 'graph', 'orders', 'companies', 'inbox',
                    'folders', 'cases', 'docs', 'import', 'setup'];
 
 function setHash(fragment) {
@@ -223,17 +241,18 @@ function applyHash() {
   const raw = decodeURIComponent(location.hash.replace(/^#/, ''));
   if (!raw) { show('dash'); return; }
 
-  const head = raw.split('/')[0];
+  /* The order book used to be called the blotter; old bookmarks still work. */
+  const head = raw.split('/')[0] === 'blotter' ? 'orders' : raw.split('/')[0];
   const rest = raw.split('/').slice(1).join('/');
 
   if (head === 'order' && rest) {
     const [orderId, tab] = rest.split('/');
-    show('blotter');
+    show('orders');
     openOrder(Number(orderId), tab);
     return;
   }
   if (head === 'new') {
-    show('blotter');
+    show('orders');
     newOrderModal(rest);          // #new/spec opens straight on the spec
     return;
   }
@@ -279,7 +298,7 @@ function show(view) {
   $('#view-' + view).classList.remove('hidden');
 
   if (view === 'dash') renderDash();
-  if (view === 'blotter') loadBlotter();
+  if (view === 'orders') loadOrders();
   if (view === 'companies') renderCompanies();
   if (view === 'inbox') renderInbox();
   if (view === 'graph') renderGraph();
@@ -345,12 +364,13 @@ function renderDash() {
     ${d.attention.length ? `
     <table class="grid">
       <thead><tr>
-        <th>ORDER</th><th>CUSTOMER</th><th>DESCRIPTION</th><th>STATUS</th>
+        <th>PRODUCT</th><th>ORDER</th><th>CUSTOMER</th><th>DESCRIPTION</th><th>STATUS</th>
         <th>PROMISED</th><th class="num">DUE IN</th><th class="num">VALUE</th><th>FLAGS</th>
       </tr></thead>
       <tbody>
         ${d.attention.map(o => `
           <tr data-open="${o.id}">
+            <td><b>${esc(orderName(o))}</b></td>
             <td style="color:var(--amber)">${esc(o.order_no)}</td>
             <td>${esc(o.company)}</td>
             <td style="color:var(--dim)">${esc(o.description || '')}</td>
@@ -410,16 +430,16 @@ function renderDash() {
     if (pin) {
       S.filters = { ...S.filters, company_id: pin.dataset.company,
                     alert: '', closed: '0' };
-      show('blotter');
+      show('orders');
       return;
     }
     const tileNode = event.target.closest('[data-act]');
     if (tileNode) {
       const act = tileNode.dataset.act;
-      if (act === 'open') { S.filters = { ...S.filters, alert: '', closed: '0' }; show('blotter'); }
+      if (act === 'open') { S.filters = { ...S.filters, alert: '', closed: '0' }; show('orders'); }
       else if (act.startsWith('alert:')) {
         S.filters = { ...S.filters, alert: act.slice(6), closed: '0' };
-        show('blotter');
+        show('orders');
       } else if (act === 'companies') show('companies');
       else if (act === 'docs') show('docs');
       else if (act === 'inbox') show('inbox');
@@ -432,7 +452,7 @@ function renderDash() {
     const statusRow = event.target.closest('[data-status]');
     if (statusRow) {
       S.filters = { ...S.filters, status: statusRow.dataset.status, alert: '', closed: '1' };
-      show('blotter');
+      show('orders');
       return;
     }
     const companyRow = event.target.closest('[data-company]');
@@ -440,7 +460,7 @@ function renderDash() {
       const match = S.boot.companies.find(c => c.name === companyRow.dataset.company);
       if (match) {
         S.filters = { ...S.filters, company_id: String(match.id), alert: '', closed: '0' };
-        show('blotter');
+        show('orders');
       }
     }
   };
@@ -526,13 +546,13 @@ async function refreshSaved() {
   } catch (err) { /* the server may simply have been stopped */ }
 }
 
-/* ---- blotter ---- */
+/* ---- the order book ---- */
 
 const COLUMNS = [
+  { key: 'product',      label: 'PRODUCT',  sort: 'product_name' },
   { key: 'order_no',     label: 'ORDER',    sort: 'order_no' },
   { key: 'company',      label: 'CUSTOMER', sort: 'company' },
   { key: 'po_number',    label: 'CUST PO',  sort: 'po_number' },
-  { key: 'product',      label: 'PRODUCT',  sort: 'product_code' },
   { key: 'description',  label: 'DESCRIPTION' },
   { key: 'status',       label: 'STATUS',   sort: 'status' },
   { key: 'promise_date', label: 'PROMISED', sort: 'promise_date' },
@@ -543,7 +563,7 @@ const COLUMNS = [
   { key: 'alerts',       label: 'FLAGS' },
 ];
 
-async function loadBlotter() {
+async function loadOrders() {
   const params = new URLSearchParams();
   Object.entries(S.filters).forEach(([k, v]) => { if (v) params.set(k, v); });
   params.set('sort', S.sort.key);
@@ -555,7 +575,7 @@ async function loadBlotter() {
     const data = await api('/api/orders?' + params.toString());
     S.orders = data.orders;
     S.selected = Math.min(S.selected, Math.max(0, S.orders.length - 1));
-    renderBlotter();
+    renderOrders();
     status(`${S.orders.length} orders`);
   } catch (err) {
     toast(err.message, 'err');
@@ -563,12 +583,12 @@ async function loadBlotter() {
   }
 }
 
-function renderBlotter() {
+function renderOrders() {
   const companies = S.boot.companies;
   const owners = [...new Set(S.orders.map(o => o.owner).filter(Boolean))].sort();
   const totalValue = S.orders.reduce((sum, o) => sum + (o.value || 0), 0);
 
-  $('#view-blotter').innerHTML = `
+  $('#view-orders').innerHTML = `
     <div class="filterbar">
       <label class="f">STATUS
         <select id="f-status">
@@ -607,7 +627,7 @@ function renderBlotter() {
       <span class="note">${S.orders.length} rows · ${money(totalValue)} total</span>
     </div>
 
-    <table class="grid" id="blottertable">
+    <table class="grid" id="ordertable">
       <thead><tr>
         ${COLUMNS.map(c => `
           <th class="${c.sort ? 'sortable' : ''} ${c.num ? 'num' : ''}"
@@ -622,26 +642,26 @@ function renderBlotter() {
       </tbody>
     </table>`;
 
-  const view = $('#view-blotter');
-  $('#f-status', view).onchange = e => { S.filters.status = e.target.value; loadBlotter(); };
-  $('#f-company', view).onchange = e => { S.filters.company_id = e.target.value; loadBlotter(); };
-  $('#f-owner', view).onchange = e => { S.filters.owner = e.target.value; loadBlotter(); };
-  $('#f-alert', view).onchange = e => { S.filters.alert = e.target.value; loadBlotter(); };
-  $('#f-closed', view).onchange = e => { S.filters.closed = e.target.checked ? '1' : '0'; loadBlotter(); };
+  const view = $('#view-orders');
+  $('#f-status', view).onchange = e => { S.filters.status = e.target.value; loadOrders(); };
+  $('#f-company', view).onchange = e => { S.filters.company_id = e.target.value; loadOrders(); };
+  $('#f-owner', view).onchange = e => { S.filters.owner = e.target.value; loadOrders(); };
+  $('#f-alert', view).onchange = e => { S.filters.alert = e.target.value; loadOrders(); };
+  $('#f-closed', view).onchange = e => { S.filters.closed = e.target.checked ? '1' : '0'; loadOrders(); };
   $('#f-clear', view).onclick = () => {
     S.filters = { status: '', company_id: '', owner: '', alert: '', closed: '1' };
-    loadBlotter();
+    loadOrders();
   };
 
-  $$('#blottertable th[data-sort]', view).forEach(th => {
+  $$('#ordertable th[data-sort]', view).forEach(th => {
     th.onclick = () => {
       const key = th.dataset.sort;
       S.sort = { key, dir: (S.sort.key === key && S.sort.dir === 'asc') ? 'desc' : 'asc' };
-      loadBlotter();
+      loadOrders();
     };
   });
 
-  $('#blottertable tbody', view).onclick = event => {
+  $('#ordertable tbody', view).onclick = event => {
     const tr = event.target.closest('tr[data-id]');
     if (!tr) return;
     S.selected = Number(tr.dataset.index);
@@ -654,12 +674,14 @@ function renderBlotter() {
 function rowHTML(o, index) {
   const closed = o.status === 'PAID' || o.status === 'CANCELLED';
   return `<tr data-id="${o.id}" data-index="${index}" class="${closed ? 'muted' : ''}">
+    <td>${o.product_name || o.product_code
+           ? `<b>${esc(o.product_name || o.product_code)}</b>`
+             + (o.product_name && o.product_code
+                 ? `<div class="subtle">${esc(o.product_code)}</div>` : '')
+           : '<span style="color:var(--dimmer)">—</span>'}</td>
     <td style="color:var(--amber)">${esc(o.order_no)}</td>
     <td>${esc(o.company)}</td>
     <td style="color:var(--dim)">${esc(o.po_number || '—')}</td>
-    <td>${esc(o.product_code || '')}${o.product_code && o.product_name ? ' ' : ''}
-      ${o.product_name ? `<span style="color:var(--dim)">${esc(o.product_name)}</span>` : ''}
-      ${!o.product_code && !o.product_name ? '<span style="color:var(--dimmer)">—</span>' : ''}</td>
     <td style="color:var(--dim)">${esc(o.description || '')}</td>
     <td><span class="chip ${cls(o.status)}">${esc(o.status)}</span></td>
     <td>${esc(o.promise_date || '—')}</td>
@@ -672,9 +694,9 @@ function rowHTML(o, index) {
 }
 
 function markSelection() {
-  $$('#blottertable tbody tr').forEach(tr =>
+  $$('#ordertable tbody tr').forEach(tr =>
     tr.classList.toggle('sel', Number(tr.dataset.index) === S.selected));
-  const row = $(`#blottertable tbody tr[data-index="${S.selected}"]`);
+  const row = $(`#ordertable tbody tr[data-index="${S.selected}"]`);
   if (row) row.scrollIntoView({ block: 'nearest' });
 }
 
@@ -734,7 +756,7 @@ function renderCompanies() {
     if (row) {
       S.filters = { status: '', company_id: row.dataset.companyId, owner: '',
                     alert: '', closed: '1' };
-      show('blotter');
+      show('orders');
     }
   };
 }
@@ -775,7 +797,8 @@ async function renderDocs(unfiledOnly = false) {
                    style="color:var(--text)">${esc(d.filename)}</a></td>
             <td class="k-${esc(d.kind || 'OTHER')}">${esc(d.kind || 'OTHER')}</td>
             <td>${d.order_no
-                  ? `<a href="#" data-open-order="${d.order_id}" style="color:var(--amber)">${esc(d.order_no)}</a>`
+                  ? `<a href="#" data-open-order="${d.order_id}" class="ordlink">${esc(orderName(d))}</a>`
+                    + `<div class="subtle">${esc(orderSub(d))}</div>`
                   : '<span style="color:var(--red)">unfiled</span>'}</td>
             <td style="color:var(--dim)">${esc(d.company || '')}</td>
             <td class="num" style="color:var(--dim)">${bytes(d.size)}</td>
@@ -980,7 +1003,7 @@ let searchTimer = null;
 
 function onSearchInput(text) {
   clearTimeout(searchTimer);
-  if (!text.trim()) { show(S.view === 'search' ? 'blotter' : S.view); return; }
+  if (!text.trim()) { show(S.view === 'search' ? 'orders' : S.view); return; }
   searchTimer = setTimeout(() => runSearch(text), 180);
 }
 
@@ -1000,11 +1023,12 @@ async function runSearch(text) {
     <h2 class="sect">Orders matching "${esc(text)}" — ${data.orders.length}</h2>
     ${data.orders.length ? `
       <table class="grid"><thead><tr>
-        <th>ORDER</th><th>CUSTOMER</th><th>CUST PO</th><th>DESCRIPTION</th>
+        <th>PRODUCT</th><th>ORDER</th><th>CUSTOMER</th><th>CUST PO</th><th>DESCRIPTION</th>
         <th>STATUS</th><th>PROMISED</th><th class="num">VALUE</th><th>FLAGS</th>
       </tr></thead><tbody>
         ${data.orders.map(o => `
           <tr data-open="${o.id}">
+            <td><b>${esc(orderName(o))}</b></td>
             <td style="color:var(--amber)">${esc(o.order_no)}</td>
             <td>${esc(o.company)}</td>
             <td style="color:var(--dim)">${esc(o.po_number || '—')}</td>
@@ -1019,7 +1043,7 @@ async function runSearch(text) {
     <h2 class="sect">Inside documents — ${data.documents.length}</h2>
     ${data.documents.length ? `
       <table class="grid"><thead><tr>
-        <th style="width:240px">FILE</th><th style="width:100px">ORDER</th>
+        <th style="width:240px">FILE</th><th style="width:140px">ORDER</th>
         <th style="width:180px">CUSTOMER</th><th>MATCH</th><th></th>
       </tr></thead><tbody>
         ${data.documents.map(d => `
@@ -1027,7 +1051,8 @@ async function runSearch(text) {
             <td><a href="/api/documents/${d.id}/file" target="_blank"
                    style="color:var(--text)">${esc(d.filename)}</a></td>
             <td>${d.order_id
-                  ? `<a href="#" data-open-order="${d.order_id}" style="color:var(--amber)">${esc(d.order_no)}</a>`
+                  ? `<a href="#" data-open-order="${d.order_id}" class="ordlink">${esc(orderName(d))}</a>`
+                    + `<div class="subtle">${esc(orderSub(d))}</div>`
                   : '<span style="color:var(--red)">unfiled</span>'}</td>
             <td style="color:var(--dim)">${esc(d.company || '')}</td>
             <td class="snippet">${highlight(d.snippet || '')}</td>
@@ -1062,7 +1087,7 @@ async function openOrder(orderId, tab) {
 function closeDetail() {
   S.openOrder = null;
   $('#detail').classList.add('hidden');
-  setHash(NAV_VIEWS.includes(S.view) ? S.view : 'blotter');
+  setHash(NAV_VIEWS.includes(S.view) ? S.view : 'orders');
 }
 
 function renderDetail() {
@@ -1095,7 +1120,8 @@ function renderDetail() {
 
   panel.innerHTML = `
     <div class="dhead">
-      <span class="ono">${esc(o.order_no)}</span>
+      <span class="ono">${esc(orderName(o))}</span>
+      <span class="ono-no">${esc(orderSub(o))}</span>
       <span class="co">${esc(o.company)}</span>
       <span class="chip ${cls(o.status)}">${esc(o.status)}</span>
       ${o.alerts.map(f => `<span class="chip ${acls(f)}">${esc(f)}</span>`).join('')}
@@ -1192,7 +1218,7 @@ function renderDetail() {
 
       <div class="dpane ${tab === 'docs' ? '' : 'hidden'}" id="pane-docs">
         <div class="dropzone" id="o-drop" style="margin-bottom:8px">
-          Drop files here to file them against ${esc(o.order_no)}
+          Drop files here to file them against ${esc(orderName(o))}
           <input type="file" id="o-file" multiple class="hidden">
         </div>
         <div class="doclist">
@@ -1213,7 +1239,7 @@ function renderDetail() {
 
       <div class="dpane ${tab === 'mail' ? '' : 'hidden'}" id="pane-mail">
         <div class="dropzone" id="o-maildrop" style="margin-bottom:8px">
-          Drop saved emails here to file them against ${esc(o.order_no)}
+          Drop saved emails here to file them against ${esc(orderName(o))}
           <input type="file" id="o-mailfile" multiple class="hidden"
                  accept=".msg,.eml,.mht,.mhtml,.txt">
         </div>
@@ -1365,14 +1391,14 @@ async function saveSpec() {
 async function changeStatus(newStatus) {
   const o = S.openOrder;
   if (!o || newStatus === o.status) return;
-  const note = prompt(`Move ${o.order_no} to ${newStatus}.\nAdd a note (optional):`, '');
+  const note = prompt(`Move ${orderName(o)} to ${newStatus}.\nAdd a note (optional):`, '');
   if (note === null) return;
   try {
     await postJSON('/api/orders/' + o.id, { status: newStatus, note });
-    toast(`${o.order_no} → ${newStatus}`, 'ok');
+    toast(`${orderName(o)} → ${newStatus}`, 'ok');
     await openOrder(o.id);
     await reloadBoot();
-    if (S.view === 'blotter') loadBlotter(); else if (S.view === 'dash') renderDash();
+    if (S.view === 'orders') loadOrders(); else if (S.view === 'dash') renderDash();
   } catch (err) { toast(err.message, 'err'); }
 }
 
@@ -1390,18 +1416,18 @@ async function saveOrderEdits() {
     toast('Saved', 'ok');
     await openOrder(o.id);
     await reloadBoot();
-    if (S.view === 'blotter') loadBlotter();
+    if (S.view === 'orders') loadOrders();
   } catch (err) { toast(err.message, 'err'); }
 }
 
 async function deleteOpenOrder() {
   const o = S.openOrder;
-  if (!confirm(`Delete ${o.order_no} and its ${o.documents.length} document(s)?\nThis cannot be undone.`)) return;
+  if (!confirm(`Delete ${orderName(o)} (${o.order_no}) and its ${o.documents.length} document(s)?\nThis cannot be undone.`)) return;
   await api('/api/orders/' + o.id, { method: 'DELETE' });
-  toast(`${o.order_no} deleted`, 'ok');
+  toast(`${orderName(o)} deleted`, 'ok');
   closeDetail();
   await reloadBoot();
-  if (S.view === 'blotter') loadBlotter(); else renderDash();
+  if (S.view === 'orders') loadOrders(); else renderDash();
 }
 
 /* ------------------------------------------------------------- uploading */
@@ -1622,7 +1648,7 @@ async function createOrder() {
     toast(`${body.order_no} created`, 'ok');
     await reloadBoot();
     openOrder(result.id);
-    if (S.view === 'blotter') loadBlotter();
+    if (S.view === 'orders') loadOrders();
     refreshSaved();
   } catch (err) { toast(err.message, 'err'); }
 }
@@ -1705,14 +1731,14 @@ document.addEventListener('keydown', event => {
 
   if (event.key === '/') { event.preventDefault(); $('#cmd').focus(); return; }
 
-  const views = { '1': 'dash', '2': 'graph', '3': 'blotter', '4': 'companies',
+  const views = { '1': 'dash', '2': 'graph', '3': 'orders', '4': 'companies',
                   '5': 'inbox', '6': 'folders', '7': 'cases', '8': 'docs',
                   '9': 'import', '0': 'setup' };
   if (views[event.key]) { show(views[event.key]); return; }
 
   if (event.key === 'n' || event.key === 'N') { newOrderModal(); return; }
 
-  if (S.view === 'blotter' && S.orders.length) {
+  if (S.view === 'orders' && S.orders.length) {
     if (event.key === 'j' || event.key === 'ArrowDown') {
       event.preventDefault();
       S.selected = Math.min(S.selected + 1, S.orders.length - 1);

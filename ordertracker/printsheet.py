@@ -268,19 +268,18 @@ def render(order_id: int) -> str | None:
 
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
-<title>{html.escape(order['order_no'])} — specification and cost</title>
+<title>{html.escape(orders.headline(order))} — specification and cost</title>
 <style>{CSS}</style></head>
 <body>
 <div class="toolbar"><button onclick="window.print()">PRINT</button></div>
 
 <div class="head">
   <div>
-    <h1>{html.escape(order['order_no'])}</h1>
-    <p class="sub">{html.escape(order.get('company') or '')}
+    <h1>{html.escape(orders.headline(order))}</h1>
+    <p class="sub">{html.escape(orders.sub_headline(order))}
+      {'<br>' if orders.sub_headline(order) else ''}
+      {html.escape(order.get('company') or '')}
       {(' · ' + html.escape(where)) if where else ''}<br>
-      {html.escape(' '.join(filter(None, (order.get('product_code'),
-                                          order.get('product_name')))))}
-      {'<br>' if (order.get('product_code') or order.get('product_name')) else ''}
       {html.escape(order.get('description') or '')}</p>
   </div>
   <div style="text-align:right">
@@ -299,7 +298,8 @@ def render(order_id: int) -> str | None:
  if order.get('notes') else ''}
 
 <footer>
-  <span>{html.escape(order['order_no'])} · {html.escape(order.get('company') or '')}</span>
+  <span>{html.escape(orders.headline(order))} · {html.escape(order['order_no'])}
+    · {html.escape(order.get('company') or '')}</span>
   <span>1 USD = {settings['fx_rate']:,.0f} KRW · printed
     {datetime.now().strftime('%d %b %Y %H:%M')}</span>
 </footer>
@@ -329,7 +329,7 @@ def case_sheet(case_id: int) -> str:
 
     position = _rows([
         ("CUSTOMER", _text(case.get("company"))),
-        ("ORDER", _text(case.get("order_no"))),
+        ("ORDER", _text(orders.headline(case) or case.get("order_no"))),
         ("CUSTOMER PO", _text(case.get("po_number"))),
         ("LOT / BATCH", _text(case.get("lot_ref"))),
         ("KIND", _text(case.get("kind"))),
@@ -387,7 +387,7 @@ table.log td {{ vertical-align:top }}
     <h1>{html.escape(case['ref'])}</h1>
     <p class="sub">{html.escape(case['title'])}<br>
       {html.escape(case.get('company') or '')}
-      {(' · ' + html.escape(case['order_no'])) if case.get('order_no') else ''}</p>
+      {(' · ' + html.escape(orders.headline(case))) if case.get('order_no') else ''}</p>
   </div>
   <div style="text-align:right">
     <div class="badge">{html.escape(case['status'])}</div>
@@ -441,7 +441,7 @@ def folder_sheet(folder_id: int) -> str:
         ("OPENED", _text(folder.get("opened_at"))),
         ("COME BACK TO IT", _text(folder.get("follow_up_at"))),
         ("CLOSED", _text(folder.get("closed_at"))),
-        ("ORDER", _text(folder.get("order_no"))),
+        ("ORDER", _text(orders.headline(folder) or folder.get("order_no"))),
         ("WORTH", _usd(folder["value_usd"]) if folder.get("value_usd") else "—"),
         ("HANDLED BY", _text(folder.get("owner"))),
     ])
