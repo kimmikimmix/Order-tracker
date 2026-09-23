@@ -4167,6 +4167,61 @@ class TestPicturesOnALine(unittest.TestCase):
 
     # --- and out of the way -----------------------------------------------
 
+    # --- on the folder or the dispute itself ------------------------------
+
+    def test_a_folder_holds_pictures_of_its_own(self):
+        saved = self.attach.add("threads", self.folder, *self.png("drawing.png"))
+        self.assertEqual(
+            [a["filename"]
+             for a in threads.get_folder(self.folder)["attachments"]],
+            ["drawing.png"])
+        self.assertEqual(saved["kind"], "PHOTO")
+
+    def test_a_dispute_holds_pictures_of_its_own(self):
+        self.attach.add("cases", self.case, *self.png("pallet.png"))
+        self.assertEqual(
+            [a["filename"] for a in cases.get_case(self.case)["attachments"]],
+            ["pallet.png"])
+
+    def test_a_folder_card_shows_everything_inside_it(self):
+        """Its own pictures and the ones on its lines, in one list."""
+        self.attach.add("threads", self.folder, *self.png("drawing.png"))
+        self.attach.add("thread_entries", self.folder_entry,
+                        *self.png("crate.png", b"other bytes"))
+        listed = [f for f in threads.list_folders()
+                  if f["id"] == self.folder][0]
+        self.assertEqual(sorted(a["filename"] for a in listed["attachments"]),
+                         ["crate.png", "drawing.png"])
+
+    def test_another_folders_pictures_stay_in_their_own_folder(self):
+        other = threads.open_folder({"company": "Sakura Denshi KK",
+                                     "topic": "a different question"})
+        self.attach.add("threads", self.folder, *self.png("drawing.png"))
+        listed = {f["id"]: f["attachments"] for f in threads.list_folders()}
+        self.assertEqual(listed[other], [])
+        self.assertEqual(len(listed[self.folder]), 1)
+
+    def test_deleting_a_folder_takes_its_pictures(self):
+        own = self.attach.add("threads", self.folder, *self.png("drawing.png"))
+        on_a_line = self.attach.add("thread_entries", self.folder_entry,
+                                    *self.png("crate.png", b"other bytes"))
+        threads.delete_folder(self.folder)
+        self.assertIsNone(documents.get(own["doc_id"]))
+        db.init_db()                       # the sweep, as at startup
+        self.assertIsNone(documents.get(on_a_line["doc_id"]),
+                          "the line went with the folder; so does its picture")
+
+    def test_deleting_a_dispute_takes_its_pictures(self):
+        own = self.attach.add("cases", self.case, *self.png("pallet.png"))
+        cases.delete_case(self.case)
+        self.assertIsNone(documents.get(own["doc_id"]))
+
+    def test_the_printed_folder_sheet_carries_them(self):
+        self.attach.add("threads", self.folder, *self.png("drawing.png"))
+        page = printsheet.folder_sheet(self.folder)
+        self.assertIn("<h2>Pictures</h2>", page)
+        self.assertIn('class="shot"', page)
+
     def test_a_photo_on_a_line_is_not_unfiled_paperwork(self):
         self.attach.add("thread_entries", self.folder_entry,
                         *self.png("drawing.png"))
@@ -4180,6 +4235,11 @@ class TestPicturesOnALine(unittest.TestCase):
             body = (ROOT / "web" / name).read_text(encoding="utf-8")
             self.assertIn("attachBoxHTML", body, name)
             self.assertIn("picturesHTML", body, name)
+        folders = (ROOT / "web" / "folders.js").read_text(encoding="utf-8")
+        self.assertIn("attachStripHTML('threads'", folders,
+                      "a folder takes pictures of its own")
+        self.assertIn("cardShotsHTML", folders,
+                      "and shows them on the folder screen")
 
 
 class TestWhatNeedsDoingToday(unittest.TestCase):

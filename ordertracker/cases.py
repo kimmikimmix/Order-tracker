@@ -15,7 +15,7 @@ dashboard can remind you about.
 import datetime
 import re
 
-from . import chase, db, orders, prefs
+from . import attach, chase, db, orders, prefs
 
 OPEN_STATUSES = ("OPEN", "INVESTIGATING", "AWAITING CUSTOMER",
                  "AWAITING FACTORY")
@@ -207,6 +207,7 @@ def delete_entry(entry_id: int) -> None:
 
 
 def delete_case(case_id: int) -> None:
+    attach.remove_all("cases", case_id)         # its own pictures
     conn = db.connect()
     with conn:
         conn.execute("DELETE FROM cases WHERE id = ?", (case_id,))
@@ -245,6 +246,7 @@ def get_case(case_id: int) -> dict | None:
     if row is None:
         return None
     item = _decorate(dict(row))
+    item["attachments"] = attach.for_lines("cases", [case_id]).get(case_id, [])
     item["entries"] = chase.entries(LOG, case_id)
     item["open_actions"] = chase.open_actions(item["entries"])
     return item

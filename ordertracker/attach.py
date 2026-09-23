@@ -1,18 +1,19 @@
-"""Photos and files hung on one line of a log.
+"""Photos and files hung on a folder, a dispute, or one line of either.
 
-A defect is argued with pictures. So a line in a dispute log, a line in a
-folder's log and a note in an order's history can all carry images — the
-board under the microscope, the packing that arrived crushed, the AOI
-report — and they are read back beside the words that explain them.
+A defect is argued with pictures. So a folder, a dispute, a line in either
+log and a note in an order's history can all carry images — the board
+under the microscope, the packing that arrived crushed, the AOI report —
+and they are read back beside the words that explain them.
 
 The picture itself is an ordinary document, so it is stored once however
 many times it is attached, it is searchable if there is any text in it,
 and it opens with everything else in the DOCS page. Only the link from a
 line to a document lives here.
 
-The three logs are three tables, so the line is named by table and id
-rather than by a foreign key. Table names reach SQL directly, so — as in
-chase.py — they come from this file and nowhere else.
+What a file hangs on is named by table and id rather than by a foreign
+key, because there are five different things it can be. Table names reach
+SQL directly, so — as in chase.py — they come from this file and nowhere
+else.
 """
 
 from . import db, documents
@@ -21,12 +22,24 @@ from . import db, documents
 # the line ultimately belongs to, so the document is filed against them
 # rather than landing in the unfiled pile.
 OWNERS = {
+    # One line of a log.
     "case_entries": """SELECT k.order_id, k.company_id FROM case_entries e
                        JOIN cases k ON k.id = e.case_id WHERE e.id = ?""",
     "thread_entries": """SELECT t.order_id, t.company_id FROM thread_entries e
                          JOIN threads t ON t.id = e.thread_id WHERE e.id = ?""",
     "status_history": """SELECT o.id AS order_id, o.company_id FROM status_history h
                          JOIN orders o ON o.id = h.order_id WHERE h.id = ?""",
+    # Or the whole thing: a drawing that is simply what this folder is
+    # about, a photograph of the pallet the whole dispute is over.
+    "threads": "SELECT order_id, company_id FROM threads WHERE id = ?",
+    "cases": "SELECT order_id, company_id FROM cases WHERE id = ?",
+}
+
+# Where a folder's or a dispute's pictures can hang: on the thing itself,
+# or on any line of its log.
+UNDER = {
+    "threads": ("threads", "thread_entries", "thread_id"),
+    "cases": ("cases", "case_entries", "case_id"),
 }
 
 # What a browser will show without being asked to download it.
@@ -107,6 +120,36 @@ def for_lines(owner: str, owner_ids) -> dict:
     return out
 
 
+def under(kind: str, parent_ids) -> dict:
+    """{id: [file, …]} for everything hanging under a folder or a dispute.
+
+    Its own pictures and the ones on its log lines together, so a card in
+    a list can show what is in there without opening it.
+    """
+    ids = [int(i) for i in parent_ids]
+    if not ids or kind not in UNDER:
+        return {}
+    owner, line_table, parent_column = UNDER[kind]
+    holes = ",".join("?" * len(ids))
+    rows = db.connect().execute(
+        f"""SELECT p.id AS parent_id, a.id, a.doc_id, d.filename, d.mime,
+                   d.size, d.kind
+              FROM {owner} p
+              JOIN attachments a
+                ON (a.owner = ? AND a.owner_id = p.id)
+                OR (a.owner = ?
+                    AND a.owner_id IN (SELECT x.id FROM {line_table} x
+                                        WHERE x.{parent_column} = p.id))
+              JOIN documents d ON d.id = a.doc_id
+             WHERE p.id IN ({holes})
+             ORDER BY a.id""",
+        (owner, line_table, *ids)).fetchall()
+    out = {}
+    for row in rows:
+        out.setdefault(row["parent_id"], []).append(_decorate(row))
+    return out
+
+
 def remove(attachment_id: int) -> None:
     """Take a file off a line, and off the disk if nothing else holds it."""
     conn = db.connect()
@@ -154,21 +197,30 @@ def _drop_if_loose(conn, doc_id: int) -> None:
         documents.delete(doc_id)
 
 
-def sweep(conn) -> int:
+def sweep(conn) -> list[int]:
     """Forget links whose line has been deleted. Run at startup.
 
     A case, a folder or an order taking its log with it does so through
     foreign keys, which know nothing about a table named in a column. This
-    is the tidying up after that.
+    is the tidying up after that. The documents that are left holding
+    nothing are returned rather than deleted here, because this runs
+    inside somebody else's transaction.
     """
-    removed = 0
+    freed = []
     for owner in OWNERS:
         rows = conn.execute(
-            f"""SELECT a.id FROM attachments a
+            f"""SELECT a.id, a.doc_id FROM attachments a
                  WHERE a.owner = ?
                    AND NOT EXISTS (SELECT 1 FROM {owner} x WHERE x.id = a.owner_id)""",
             (owner,)).fetchall()
         for row in rows:
             conn.execute("DELETE FROM attachments WHERE id = ?", (row["id"],))
-            removed += 1
-    return removed
+            freed.append(row["doc_id"])
+    return freed
+
+
+def drop_loose(doc_ids) -> None:
+    """Throw away the pictures nothing holds any more."""
+    conn = db.connect()
+    for doc_id in dict.fromkeys(doc_ids):
+        _drop_if_loose(conn, doc_id)

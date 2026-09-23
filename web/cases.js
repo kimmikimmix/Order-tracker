@@ -312,6 +312,11 @@ async function openCase(caseId) {
       <a class="btn" href="/print/case/${item.id}" target="_blank">PRINT REPORT</a>
     </div>
 
+    <div class="topicbox casephotos">
+      ${attachStripHTML('cases', item.id, item.attachments,
+                        'pictures of the defect — drop or paste one anywhere here')}
+    </div>
+
     <div class="mpane" id="cpane-log">
       <div class="formgrid entryform">
         <div class="lbl">WHAT HAPPENED *</div>
@@ -415,6 +420,14 @@ async function openCase(caseId) {
 
   $('#ce-cancel').onclick = stopEditing;
   wireAttachBox('centry', $('#modal'));
+
+  // Anything dropped or pasted on this dispute, other than on the box
+  // under the log form, belongs to the dispute itself.
+  $('#modal').dataset.attachOwner = 'cases';
+  $('#modal').dataset.attachId = String(item.id);
+  wireAttachStrip('cases', item.id, $('#modal'));
+  $('.casephotos', $('#modal')).onclick = event =>
+    handlePictureClick(event, () => { openCase(caseId); loadCases(); });
 
   $('#ce-add').onclick = async () => {
     const body = {

@@ -179,6 +179,8 @@ function folderCard(folder) {
         <div class="v">${folderDue(folder)}</div>
       </div>
 
+      ${cardShotsHTML(folder.attachments)}
+
       <div class="ffoot">
         <span>${folder.email_count || 0} email(s)</span>
         <span>${folder.entries || 0} logged</span>
@@ -335,6 +337,8 @@ async function openFolder(folderId) {
             ? `· <span style="color:var(--amber)">${folder.open_actions} action(s) outstanding</span>`
             : ''}</div>
       </div>
+      ${attachStripHTML('threads', folder.id, folder.attachments,
+                        'pictures of this enquiry — drop or paste one anywhere here')}
     </div>
 
     <div class="mpane" id="fpane-log">
@@ -469,6 +473,14 @@ async function openFolder(folderId) {
 
   $('#fe-cancel').onclick = stopEditing;
   wireAttachBox('fentry', $('#modal'));
+
+  // Anything dropped or pasted on this folder, other than on the box
+  // under the log form, belongs to the folder itself.
+  $('#modal').dataset.attachOwner = 'threads';
+  $('#modal').dataset.attachId = String(folder.id);
+  wireAttachStrip('threads', folder.id, $('#modal'));
+  $('.topicbox', $('#modal')).onclick = event =>
+    handlePictureClick(event, () => { openFolder(folderId); loadFolders(); });
 
   $('#fe-add').onclick = async () => {
     const body = {

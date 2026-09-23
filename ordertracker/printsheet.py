@@ -85,6 +85,12 @@ def _pictures(entry) -> str:
             + (f'<div class="detail">file: {others}</div>' if others else ""))
 
 
+def _own_pictures(item) -> str:
+    """The pictures of the thing itself, under its own heading."""
+    shown = _pictures(item)
+    return f"<h2>Pictures</h2>{shown}" if shown else ""
+
+
 def _spec_blocks(order, spec) -> str:
     values = spec["values"]
     derived = spec["derived"]
@@ -440,6 +446,7 @@ table.log td {{ vertical-align:top }}
 <table>{position}</table>
 
 {block('What is wrong', case.get('detail'))}
+{_own_pictures(case)}
 {block('Root cause', case.get('root_cause'))}
 {block('Resolution', case.get('resolution'))}
 
@@ -546,6 +553,7 @@ table.log td {{ vertical-align:top }}
 
 {block('What they want', folder.get('summary'))}
 {block('Where it stands', folder.get('situation'))}
+{_own_pictures(folder)}
 
 <h2>Log of communications and actions</h2>
 <table class="log">

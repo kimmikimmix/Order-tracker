@@ -315,7 +315,17 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 }
 .unpend:hover, .shotx:hover { color: var(--red); }
 
+/* The strip on a folder or a dispute: its own pictures, always in view. */
+.attachbox.straight { border-style: solid; border-color: var(--line-soft);
+                      margin: 8px 0 0; }
+.attachbox.straight .shots { width: 100%; margin: 2px 0 0; }
+.topicbox.casephotos { padding: 6px 10px; }
+
 .shots { display: flex; gap: 6px; flex-wrap: wrap; margin: 5px 0 2px; }
+.shots.cardshots { margin: 8px 0 0; }
+.shots.cardshots img { height: 54px; max-width: 86px; }
+.shots.cardshots .more { align-self: center; font-size: 10px;
+                         color: var(--dimmer); }
 .shot { position: relative; display: inline-flex; line-height: 0; }
 .shot img {
   height: 72px; width: auto; max-width: 132px; object-fit: cover;

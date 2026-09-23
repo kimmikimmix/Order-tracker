@@ -327,17 +327,27 @@ same box, all six fields — so a typo or a wrong date is corrected in place and
 the entry keeps the day it happened. **DEL** removes one outright. The folder
 log works the same way.
 
-**Pictures go on the line they belong to.** Under the box is `+ PHOTO / FILE`:
-pick the files, drag them anywhere onto the folder or the case, or paste a
-screenshot straight in with `Ctrl+V`. They appear as thumbnails on the entry,
-click one to see it full size, and the `×` in its corner takes it off again. A
-photo is stored as an ordinary document, filed against the same order and
-customer as the line it hangs on, so it is never counted as paperwork you
-forgot to file. Delete the line and its photographs go with it.
+**Pictures.** A folder and a dispute each have a strip of their own at the
+top: `+ PHOTO / FILE`, or drag a file anywhere onto the open folder, or paste
+a screenshot with `Ctrl+V`. It goes on straight away and stays in view on
+every tab. The thumbnails also show on the **FOLDERS cards**, so a picture is
+visible on the folder screen without opening anything.
 
-`PRINT REPORT` prints the pictures inside the log, beside the words that
-explain them — which is the difference between describing a defect and
-showing it.
+To put a picture on one particular line of the log instead, use the
+`+ PHOTO / FILE` box under the entry form, or drop the file onto that box:
+those wait there until you press ADD, and then belong to that entry. Either
+way, click a thumbnail to see it full size and the `×` in its corner takes it
+off again.
+
+A photo is stored as an ordinary document, filed against the same order and
+customer as the folder or line it hangs on, so it is never counted as
+paperwork you forgot to file. Delete the folder, the dispute or the line and
+its photographs go with it.
+
+`PRINT REPORT` prints the pictures — the dispute's own under a **Pictures**
+heading, and the ones on a log line inside the log beside the words that
+explain them. That is the difference between describing a defect and showing
+it. The folder sheet does the same.
 
 An email in the tray can be logged straight into a case, or can open a new
 one with its subject and summary already filled in.

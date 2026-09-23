@@ -571,7 +571,9 @@ def init_db() -> None:
         # Imported here rather than at the top: attach.py reads this
         # module, and this is the only place that needs it.
         from . import attach
-        attach.sweep(conn)
+        loose = attach.sweep(conn)
+    if loose:
+        attach.drop_loose(loose)           # outside the transaction above
     if rebuild:
         rebuild_search_index()
 

@@ -14,7 +14,7 @@ The order book answers "what have we sold". This answers the other half:
 import datetime
 import re
 
-from . import chase, db, orders, prefs
+from . import attach, chase, db, orders, prefs
 
 LOG = "thread_entries"
 
@@ -164,6 +164,7 @@ def update_folder(folder_id: int, data: dict, actor: str = "") -> dict:
 
 
 def delete_folder(folder_id: int) -> None:
+    attach.remove_all("threads", folder_id)     # its own pictures
     conn = db.connect()
     with conn:
         conn.execute("UPDATE emails SET thread_id = NULL WHERE thread_id = ?",
@@ -291,6 +292,8 @@ def get_folder(folder_id: int) -> dict | None:
     if row is None:
         return None
     item = _decorate(row)
+    item["attachments"] = attach.for_lines("threads",
+                                           [folder_id]).get(folder_id, [])
     item["entries"] = chase.entries(LOG, folder_id)
     item["open_actions"] = chase.open_actions(item["entries"])
     item["emails"] = [
@@ -339,7 +342,13 @@ def list_folders(company_id=None, status=None, open_only=False, query=None,
     sql.append("""ORDER BY CASE WHEN t.follow_up_at IS NULL THEN 1 ELSE 0 END,
                            t.follow_up_at ASC, t.opened_at DESC LIMIT ?""")
     params.append(limit)
-    return [_decorate(row) for row in db.connect().execute(" ".join(sql), params)]
+    folders = [_decorate(row)
+               for row in db.connect().execute(" ".join(sql), params)]
+    # What is in each folder, its log included, so a card can show it.
+    pictures = attach.under("threads", [f["id"] for f in folders])
+    for folder in folders:
+        folder["attachments"] = pictures.get(folder["id"], [])
+    return folders
 
 
 def follow_ups(within_days: int = 7) -> list[dict]:

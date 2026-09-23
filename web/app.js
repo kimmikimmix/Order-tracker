@@ -758,14 +758,75 @@ function addPending(key, files) {
   toast(`${files.length} file(s) ready — they go on when you save`, 'ok');
 }
 
-/* Where a dropped or pasted file should land, if anywhere. */
-function trayFor(node) {
-  if (!node || !node.closest) return '';
+/* Where a dropped or pasted file should land, if anywhere.
+
+   A file dropped on the box under a note being written waits for that
+   note. Anything else dropped on an open folder or dispute goes onto the
+   folder or the dispute itself, there and then — which is what somebody
+   dropping a photograph on a folder means by it. */
+function attachTargetFor(node) {
+  if (!node || !node.closest) return null;
   const box = node.closest('[data-tray]');
-  if (box) return box.dataset.tray;
-  const host = node.closest('#modal, #pane-history');
-  const inner = host ? $('[data-tray]', host) : null;
-  return inner ? inner.dataset.tray : '';
+  if (box) return { tray: box.dataset.tray };
+  const host = node.closest('[data-attach-owner]');
+  if (host) {
+    return { owner: host.dataset.attachOwner, id: Number(host.dataset.attachId) };
+  }
+  const pane = node.closest('#pane-history');
+  const inner = pane ? $('[data-tray]', pane) : null;
+  return inner ? { tray: inner.dataset.tray } : null;
+}
+
+/* Straight onto the thing itself, no note needed. */
+async function attachStraight(owner, ownerId, files) {
+  if (!files || !files.length || !ownerId) return;
+  const form = new FormData();
+  Array.from(files).forEach(file => form.append('files', file));
+  status(`attaching ${files.length} file(s)…`);
+  try {
+    const result = await api(`/api/attachments/${owner}/${ownerId}`,
+                             { method: 'POST', body: form });
+    (result.failed || []).forEach(f => toast(`${f.filename}: ${f.error}`, 'err'));
+    toast(`${(result.saved || []).length} file(s) added`, 'ok');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+  status('ready');
+  refreshAttached(owner, ownerId);
+}
+
+/* Redraw whatever was holding it. */
+function refreshAttached(owner, ownerId) {
+  if (owner === 'threads') { openFolder(ownerId); loadFolders(); }
+  else if (owner === 'cases') { openCase(ownerId); loadCases(); }
+  refreshSaved();
+}
+
+/* The strip of pictures on a folder or a dispute, with its own button. */
+function attachStripHTML(owner, ownerId, items, label) {
+  return `<div class="attachbox straight" data-attach-here="${owner}/${ownerId}">
+    <button type="button" class="btn tiny" data-pick-here="${owner}/${ownerId}"
+      >+ PHOTO / FILE</button>
+    <span class="note">${esc(label || 'drop or paste a picture anywhere here')}</span>
+    <input type="file" multiple class="hidden" data-input-here="${owner}/${ownerId}">
+    ${picturesHTML(items)}
+  </div>`;
+}
+
+function wireAttachStrip(owner, ownerId, root) {
+  const key = `${owner}/${ownerId}`;
+  const box = $(`[data-attach-here="${key}"]`, root || document);
+  if (!box) return;
+  const input = $(`[data-input-here="${key}"]`, box);
+  $(`[data-pick-here="${key}"]`, box).onclick = () => input.click();
+  input.onchange = () => {
+    attachStraight(owner, ownerId, input.files);
+    input.value = '';
+  };
+  ['dragover', 'dragenter'].forEach(name =>
+    box.addEventListener(name, e => { e.preventDefault(); box.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(name =>
+    box.addEventListener(name, () => box.classList.remove('over')));
 }
 
 function wireAttachBox(key, root) {
@@ -822,15 +883,37 @@ function picturesHTML(items) {
     </span>`).join('')}</div>`;
 }
 
+/* A few thumbnails for a card in a list: everything in there, capped. */
+function cardShotsHTML(items, most = 4) {
+  // The same picture can hang on the folder and on one of its lines; a
+  // card should show it once.
+  const seen = new Set();
+  const shots = (items || []).filter(item => {
+    if (!item.is_image || seen.has(item.doc_id)) return false;
+    seen.add(item.doc_id);
+    return true;
+  });
+  if (!shots.length) return '';
+  const extra = shots.length - most;
+  return `<div class="shots cardshots">
+    ${shots.slice(0, most).map(item => `
+      <img src="/api/documents/${item.doc_id}/file" alt="${esc(item.filename)}"
+           title="${esc(item.filename)}">`).join('')}
+    ${extra > 0 ? `<span class="more">+${extra}</span>` : ''}
+  </div>`;
+}
+
 /* Clicks on a picture, anywhere the three logs are drawn. */
 async function handlePictureClick(event, afterRemoval) {
   const open = event.target.closest('[data-open-doc]');
   if (open) {
+    event.stopPropagation();
     window.open('/api/documents/' + open.dataset.openDoc + '/file', '_blank');
     return true;
   }
   const remove = event.target.closest('[data-unattach]');
   if (!remove) return false;
+  event.stopPropagation();
   if (!confirm('Take this file off the note?')) return true;
   try {
     await api('/api/attachments/' + remove.dataset.unattach, { method: 'DELETE' });
@@ -1732,6 +1815,10 @@ async function uploadFiles(files, orderId, onDone) {
 
 function modal(title, bodyHTML, buttons) {
   $('#modal').classList.remove('hidden');
+  // Whatever this modal turns out to be, it does not yet own any files:
+  // whoever opens it says so afterwards.
+  delete $('#modal').dataset.attachOwner;
+  delete $('#modal').dataset.attachId;
   $('#modal').innerHTML = `
     <div class="mbox">
       <div class="mhead">${title}</div>
@@ -1751,6 +1838,8 @@ function modal(title, bodyHTML, buttons) {
 function closeModal() {
   $('#modal').classList.add('hidden');
   $('#modal').innerHTML = '';
+  delete $('#modal').dataset.attachOwner;
+  delete $('#modal').dataset.attachId;
   // A case or an email opened from a link put itself in the address bar;
   // closing it puts the view back, so a refresh lands where you are.
   if (!S.openOrder && NAV_VIEWS.includes(S.view)) setHash(S.view);
@@ -2025,8 +2114,15 @@ window.addEventListener('drop', e => {
   $('#dropveil').classList.add('hidden');
   if (e.target.closest('.dropzone')) return;   // its own handler deals with it
   e.preventDefault();
-  const tray = trayFor(e.target);              // a note is being written
-  if (tray) { addPending(tray, e.dataTransfer.files); return; }
+  const target = attachTargetFor(e.target);
+  if (target && target.tray) {                 // a note is being written
+    addPending(target.tray, e.dataTransfer.files);
+    return;
+  }
+  if (target && target.owner) {                // straight onto the folder
+    attachStraight(target.owner, target.id, e.dataTransfer.files);
+    return;
+  }
   const orderId = S.openOrder ? S.openOrder.id : null;
   uploadFiles(e.dataTransfer.files, orderId, () => {
     if (S.openOrder) openOrder(S.openOrder.id);
@@ -2038,10 +2134,12 @@ window.addEventListener('drop', e => {
 window.addEventListener('paste', event => {
   const files = event.clipboardData && event.clipboardData.files;
   if (!files || !files.length) return;
-  const tray = trayFor(document.activeElement) || trayFor(event.target);
-  if (!tray) return;
+  const target = attachTargetFor(document.activeElement)
+              || attachTargetFor(event.target);
+  if (!target) return;
   event.preventDefault();
-  addPending(tray, files);
+  if (target.tray) addPending(target.tray, files);
+  else attachStraight(target.owner, target.id, files);
 });
 
 /* ------------------------------------------------------------------ wire */
